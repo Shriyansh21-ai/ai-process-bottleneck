@@ -1,0 +1,20 @@
+required_columns:
+  - process_id
+  - case_id
+  - task_id
+  - task_name
+  - start_time
+  - end_time
+  - resource_type
+  - resource_id
+  - status
+
+allowed_resource_types:
+  - human
+  - machine
+  - system
+
+allowed_status:
+  - success
+  - fail
+  - rework
