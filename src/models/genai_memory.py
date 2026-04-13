@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, Text, String
-from db.base import Base
+from src.db.base import Base
 
 
 class GenAIMemory(Base):

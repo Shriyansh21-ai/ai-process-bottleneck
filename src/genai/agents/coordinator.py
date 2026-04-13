@@ -1,7 +1,7 @@
-from genai.agents.planner import PlannerAgent
-from genai.agents.memory_retriever import RetrieverAgent
-from genai.agents.executor import ExecutorAgent
-from genai.agents.critic import CriticAgent
+from src.genai.agents.planner import PlannerAgent
+from src.genai.agents.memory_retriever import RetrieverAgent
+from src.genai.agents.executor import ExecutorAgent
+from src.genai.agents.critic import CriticAgent
 
 class CoordinatorAgent:
     def __init__(self, db):

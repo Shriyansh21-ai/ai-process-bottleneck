@@ -1,7 +1,7 @@
 import time
-from db.session import SessionLocal
-from genai.engine import GenAIEngine
-from models.genai_task_log import GenAITaskLog
+from src.db.session import SessionLocal
+from src.genai.engine import GenAIEngine
+from src.models.genai_task_log import GenAITaskLog
 
 
 def run_agent_job(job_id: int, session_id: str):

@@ -2,8 +2,8 @@
 
 from sqlalchemy.orm import Session
 from typing import Dict, Any
-from rag.retreiver import retrieve_context
-from models.case import Case
+from src.rag.retreiver import retrieve_context
+from src.models.case import Case
 
 def search_cases(db: Session, query: str) -> str:
     """Search historical cases related to a bottleneck"""

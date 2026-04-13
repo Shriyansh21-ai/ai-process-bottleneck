@@ -1,8 +1,8 @@
 import asyncio
 from sqlalchemy.orm import Session
 
-from genai.engine import GenAIEngine
-from genai.jobs.service import update_job_status
+from src.genai.engine import GenAIEngine
+from src.genai.jobs.service import update_job_status
 
 async def run_job(db: Session, job_id: int, query: str):
     engine = GenAIEngine(db)

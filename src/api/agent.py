@@ -1,10 +1,14 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
-from models.genai_task_log import GenAITaskLog
-from genai.jobs.manager import run_agent_job
-from genai.sessions.session_manager import SessionManager
+from src.db.session import SessionLocal
+from src.models.genai_task_log import GenAITaskLog
+from src.genai.jobs.manager import run_agent_job
+from src.genai.sessions.session_manager import SessionManager
+from fastapi.responses import StreamingResponse
+import time
 
 router = APIRouter()
 
@@ -15,6 +19,23 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def run_agent_sync(query: str, db):
+    """
+    Safe wrapper to call async engine synchronously
+    """
+
+    from genai.engine import GenAIEngine
+
+    engine = GenAIEngine(db=db, session_id="stream-session")
+
+    # Run async function safely
+    result = asyncio.run(engine.run_task(query))
+
+    # Extract final answer properly
+    return result["answer"]
+
+
 
 
 # 🚀 Submit Agent Job (Session-aware)
@@ -75,3 +96,24 @@ def get_agent_job(job_id: int, db: Session = Depends(get_db)):
         "execution_time_seconds": job.execution_time_seconds,
         "created_at": job.created_at,
     }
+
+@router.post("/run-stream")
+def run_stream(
+    query: dict,
+    db: Session = Depends(get_db)
+):
+    user_query = query.get("query")
+
+    # ✅ Use NEW function
+    response_text = run_agent_sync(user_query, db)
+
+    def stream_generator():
+        for word in response_text.split():
+            yield word + " "
+            time.sleep(0.03)
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/plain"
+    )
+

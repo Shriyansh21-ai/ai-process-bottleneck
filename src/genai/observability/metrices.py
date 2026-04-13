@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from models.agent_metrics import AgentMetric
+from src.models.agent_metrics import AgentMetric
 
 
 def record_agent_metric(

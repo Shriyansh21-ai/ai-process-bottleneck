@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from rag.embeddings import embed_text
+from src.rag.embeddings import embed_text
 
 def retrieve_context(
     db: Session,

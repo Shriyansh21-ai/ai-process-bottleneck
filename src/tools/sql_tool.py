@@ -1,5 +1,5 @@
 from sqlalchemy import text
-from db.session import SessionLocal
+from src.db.session import SessionLocal
 
 def run_sql_query(input_data: dict):
     table = input_data.get("table")

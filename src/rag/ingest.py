@@ -1,9 +1,9 @@
 import uuid
 from sqlalchemy.orm import Session
-from rag.chunker import TextChunker
-from models.document import Document
-from models.document_chunk import DocumentChunk
-from rag.embeddings import embed_text
+from src.rag.chunker import TextChunker
+from src.models.document import Document
+from src.models.document_chunk import DocumentChunk
+from src.rag.embeddings import embed_text
 
 chunker = TextChunker()
 

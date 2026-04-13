@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, TIMESTAMP
 from sqlalchemy.sql import func
-from db.base import Base
+from src.db.base import Base
 import uuid
 
 class GenAISession(Base):

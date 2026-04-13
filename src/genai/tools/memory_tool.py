@@ -1,6 +1,6 @@
 # genai/tools/memory_tool.py
 
-from genai.tools.tool_registry import ai_tool
+from src.genai.tools.tool_registry import ai_tool
 
 
 @ai_tool(

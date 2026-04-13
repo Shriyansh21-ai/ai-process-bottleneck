@@ -1,5 +1,5 @@
-from genai.agents.base import BaseAgent
-from genai.memory import GenAIMemoryDB
+from src.genai.agents.base import BaseAgent
+from src.genai.memory import GenAIMemoryDB
 
 class AnalyzerAgent(BaseAgent):
     name = "memory-agent"

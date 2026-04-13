@@ -4,7 +4,7 @@ import json
 from typing import Dict
 
 from openai import AsyncOpenAI
-from genai.config.model_pricing import calculate_cost
+from src.genai.config.model_pricing import calculate_cost
 
 
 class ReflectionAgent:

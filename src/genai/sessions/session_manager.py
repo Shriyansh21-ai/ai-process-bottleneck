@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from models.genai_session import GenAISession
+from src.models.genai_session import GenAISession
 
 class SessionManager:
 

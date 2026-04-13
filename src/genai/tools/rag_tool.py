@@ -1,7 +1,7 @@
 # genai/tools/rag_tool.py
 
-from genai.tools.tool_registry import ai_tool
-from rag.retreiver import retrieve_context
+from src.genai.tools.tool_registry import ai_tool
+from src.rag.retreiver import retrieve_context
 
 
 @ai_tool(

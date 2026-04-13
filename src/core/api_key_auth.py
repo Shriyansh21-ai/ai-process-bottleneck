@@ -1,7 +1,7 @@
 from fastapi import Header, HTTPException, status, Depends
 from sqlalchemy.orm import Session
-from core.security import hash_api_key
-from db.session import SessionLocal
+from src.core.security import hash_api_key
+from src.db.session import SessionLocal
 from sqlalchemy import text
 
 def get_db():

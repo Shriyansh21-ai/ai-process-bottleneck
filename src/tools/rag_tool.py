@@ -1,6 +1,6 @@
 from sqlalchemy import text
-from db.session import SessionLocal
-from genai.embeddings import embed_text
+from src.db.session import SessionLocal
+from src.genai.embeddings import embed_text
 
 def retrieve_memory(input_data: dict):
     query_text = input_data.get("query", "")

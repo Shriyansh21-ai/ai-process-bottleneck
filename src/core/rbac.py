@@ -1,5 +1,5 @@
 from fastapi import Depends, HTTPException, status
-from core.auth import get_current_user
+from src.core.auth import get_current_user
 
 def require_role(*allowed_roles: str):
     def role_checker(user=Depends(get_current_user)):

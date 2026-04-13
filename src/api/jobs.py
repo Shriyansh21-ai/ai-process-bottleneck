@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
-from models.agent_job import AgentJob
+from src.db.session import SessionLocal
+from src.models.agent_job import AgentJob
 
 router = APIRouter()
 

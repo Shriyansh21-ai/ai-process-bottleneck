@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, Numeric, TIMESTAMP
 from sqlalchemy.sql import func
-from db.base import Base
+from src.db.base import Base
 
 
 class AgentMetric(Base):

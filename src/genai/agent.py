@@ -1,8 +1,8 @@
-from genai.state import AgentState
-from genai.agents.planner import create_plan
-from genai.agents.executor import execute_step
-from genai.memory import store_memory
-from genai.logger import log_audit_event
+from src.genai.state import AgentState
+from src.genai.agents.planner import create_plan
+from src.genai.agents.executor import execute_step
+from src.genai.memory import store_memory
+from src.genai.logger import log_audit_event
 
 def run_agent(db, task: str):
     plan = create_plan(task)

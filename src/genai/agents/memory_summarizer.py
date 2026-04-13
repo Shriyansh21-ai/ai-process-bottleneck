@@ -1,9 +1,12 @@
 import asyncio
 import os
-from openai import OpenAI
-from genai.agents.base import BaseAgent
+from src.genai.agents.base import BaseAgent
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = None
+if OPENAI_API_KEY:
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 class MemorySummarizerAgent(BaseAgent):
@@ -27,6 +30,10 @@ Rules:
 - Remove redundancy
 - Max 5–7 bullet points
 """
+
+            if client is None:
+                # Fallback summarizer for local testing
+                return "[SUMMARY FALLBACK] " + " ".join(joined_memory.split()[:100])
 
             response = await asyncio.to_thread(
                 lambda: client.chat.completions.create(

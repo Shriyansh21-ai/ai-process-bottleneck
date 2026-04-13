@@ -1,5 +1,6 @@
-from src.models.process import Process
-from src.models.case import Case
-from src.models.resource import Resource
-from src.models.task import Task
+from .process import Process
+from .case import Case
+from .resource import Resource
+from .task import Task
 from .audit_log import AuditLog
+from .genai_task_log import GenAITaskLog  # ADD THIS if exists

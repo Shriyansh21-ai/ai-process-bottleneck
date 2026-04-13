@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, JSON
 from sqlalchemy.sql import func
-from db.base import Base
+from src.db.base import Base
 
 class AgentJob(Base):
     __tablename__ = "agent_jobs"

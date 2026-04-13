@@ -1,4 +1,4 @@
-from genai.engine import GenAIEngine
+from src.genai.engine import GenAIEngine
 
 class ExecutorAgent:
     def __init__(self):

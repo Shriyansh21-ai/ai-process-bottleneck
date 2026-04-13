@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+* {
+  transition: color 200ms;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.8);
+}
+
+/* Prose styling for markdown */
+.prose {
+  color: inherit;
+}
+
+.prose code {
+  border-radius: 4px;
+  padding: 0.375rem 0.375rem;
+}
+
+.prose pre {
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+/* Animation for loading */
+@keyframes spin-smooth {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin-smooth 1s linear infinite;
+}
+
+/* Gradient button hover effect */
+button {
+  transition: all 200ms;
+}

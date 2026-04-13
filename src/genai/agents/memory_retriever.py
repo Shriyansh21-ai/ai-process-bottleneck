@@ -1,4 +1,4 @@
-from genai.memory import GenAIMemoryDB
+from src.genai.memory import GenAIMemoryDB
 
 class RetrieverAgent:
     def __init__(self, db):

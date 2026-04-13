@@ -1,8 +1,8 @@
-from genai.agents.planner import PlannerAgent
-from genai.agents.memory_retriever import RetrieverAgent
-from genai.agents.analyst import AnalystAgent
-from genai.agents.recommender import RecommenderAgent
-from genai.agents.synthesizer import SynthesizerAgent
+from src.genai.agents.planner import PlannerAgent
+from src.genai.agents.memory_retriever import RetrieverAgent
+from src.genai.agents.analyst import AnalystAgent
+from src.genai.agents.recommender import RecommenderAgent
+from src.genai.agents.synthesizer import SynthesizerAgent
 
 class AgentRunner:
     def __init__(self, db):

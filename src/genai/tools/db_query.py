@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from genai.tools import Tool
+from src.genai.tools import Tool
 
 class DBQueryTool(Tool):
     name = "db_query"

@@ -1,7 +1,7 @@
-from tools.sql_tool import run_sql_query
-from tools.ml_tool import run_ml_analysis
-from tools.rag_tool import retrieve_memory
-from utils.logger import setup_logger
+from src.tools.sql_tool import run_sql_query
+from src.tools.ml_tool import run_ml_analysis
+from src.tools.rag_tool import retrieve_memory
+from src.utils.logger import setup_logger
 
 logger = setup_logger()
 

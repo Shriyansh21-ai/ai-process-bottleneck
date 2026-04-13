@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
 from sqlalchemy.sql import func
-from db.base import Base
+from src.db.base import Base
 
 class GenAITaskLog(Base):
     __tablename__ = "genai_task_logs"

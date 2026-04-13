@@ -1,13 +1,14 @@
-from models.genai_memory import GenAIMemory
-from genai.embeddings import embed_text
+from src.models.genai_memory import GenAIMemory
+from src.genai.embeddings import embed_text
 from sqlalchemy.orm import Session
 from typing import List
 
 
 class GenAIMemoryDB:
 
-    def __init__(self, db: Session):
+    def __init__(self, db, session_id):
         self.db = db
+        self.session_id = session_id
 
     def add_memory(self, session_id: str, content: str):
         embedding = embed_text(content)

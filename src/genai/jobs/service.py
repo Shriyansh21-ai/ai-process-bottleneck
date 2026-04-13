@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from models.agent_job import AgentJob
+from src.models.agent_job import AgentJob
 
 def create_job(db: Session, query: str) -> AgentJob:
     job = AgentJob(query=query)
