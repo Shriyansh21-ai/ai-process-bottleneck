@@ -4,7 +4,6 @@ import time
 import uuid
 from typing import Dict
 import asyncio
-import os  # ✅ ADDED
 
 from src.genai.memory import GenAIMemoryDB
 from src.genai.logger import safe_run
@@ -14,6 +13,7 @@ from src.genai.agents.planner import PlannerAgent
 from src.genai.agents.synthesizer import SynthesizerAgent
 from src.genai.agents.reflection_agent import ReflectionAgent
 from src.genai.agents.decomposition_agent import DecompositionAgent
+from src.genai.agents.supervisor_agent import SupervisorAgent
 
 # 🔐 Guardrails
 from src.genai.guardrails.prompt_guard import detect_prompt_injection
@@ -26,14 +26,25 @@ import src.genai.tools as tools_package
 # 🔐 Permissions
 from src.genai.security.tool_permission import ToolPermissionManager
 
-# 📊 Metrics
-from src.models.agent_metrics import AgentMetric
-
-# 🆕 Routing + Fallback
+# 🧠 Routing + Fallback
 from src.genai.routing.model_router import ModelRouter
 from src.genai.routing.fallback_executor import FallbackExecutor
+
+# 🤖 Offline
 from src.genai.offline.ollama_client import OllamaClient
 
+# 🧠 Critics
+from src.genai.agents.critic_agent import CriticAgent
+from src.genai.agents.critics.logic_critic import LogicCritic
+from src.genai.agents.critics.risk_critic import RiskCritic
+from src.genai.agents.critics.optimization_critic import OptimizationCritic
+from src.genai.agents.critics.critic_aggregator import CriticAggregator
+
+#semantic search
+from sentence_transformers import SentenceTransformer
+
+#scoring system
+from src.genai.intelligence.agent_score_manager import AgentScoreManager
 
 class GenAIEngine:
 
@@ -47,14 +58,14 @@ class GenAIEngine:
         # 🤖 Agents
         self.planner = PlannerAgent()
         self.synthesizer = SynthesizerAgent()
-        self.reflection_agent = ReflectionAgent()
         self.decomposer = DecompositionAgent()
+        self.supervisor = SupervisorAgent()
 
-        # 🧠 Routing + Reliability
+        # 🧠 Routing
         self.model_router = ModelRouter()
         self.fallback_executor = FallbackExecutor()
 
-        # 🛠 Tool system
+        # 🛠 Tools
         self.tool_registry = ToolRegistry()
         self.tool_registry.auto_discover(tools_package)
 
@@ -65,37 +76,247 @@ class GenAIEngine:
             self.tool_registry.list_tools()
         )
 
-        # 🔁 Reflection config
-        self.max_refinements = 1
-        self.confidence_threshold = 0.75
-
-        # 💰 Budget Guard
-        self.max_tokens_per_request = 15000
-        self.max_cost_per_request = 0.05
-
-        # 🤖 Offline Client
+        # 🤖 Offline
         self.ollama_client = OllamaClient()
 
+        # 🧠 Critics
+        self.critic = CriticAgent()
+        self.logic_critic = LogicCritic()
+        self.risk_critic = RiskCritic()
+        self.optimization_critic = OptimizationCritic()
+        self.critic_aggregator = CriticAggregator()
 
-    # ------------------------------------------------------------
-    # BUDGET GUARD
-    # ------------------------------------------------------------
-    def _check_budget(self, total_tokens: int, total_cost: float):
-        if total_tokens > self.max_tokens_per_request:
-            raise RuntimeError(
-                f"Token budget exceeded "
-                f"({total_tokens} > {self.max_tokens_per_request})"
+        #  Semantic Search 
+        self.embedding_model = SentenceTransformer(
+    "all-MiniLM-L6-v2"
+)
+        # Scoring System
+        self.agent_score_manager = AgentScoreManager()
+
+    def _retrieve_relevant_memory(
+    self,
+    query: str,
+    top_k: int = 3
+) -> str:
+
+        try:
+            memories = self.memory.get_all()
+
+            if not memories:
+                return ""
+
+            query_embedding = self.embedding_model.encode(query)
+
+            scored = []
+
+            for m in memories:
+
+                content = str(m)
+
+                memory_embedding = self.embedding_model.encode(content)
+
+                similarity = self._cosine_similarity(
+                    query_embedding,
+                    memory_embedding
+                )
+
+                scored.append((similarity, content))
+
+            scored.sort(reverse=True, key=lambda x: x[0])
+
+            top_memories = [
+                c for _, c in scored[:top_k]
+            ]
+
+            return "\n---\n".join(top_memories)
+
+        except Exception as e:
+            print("⚠️ Semantic retrieval failed:", str(e))
+            return ""
+        
+    def _cosine_similarity(self, a, b):
+
+        import numpy as np
+
+        a = np.array(a)
+        b = np.array(b)
+
+        return np.dot(a, b) / (
+            np.linalg.norm(a) * np.linalg.norm(b)
+        )
+    
+    def _select_relevant_tools(self, query: str):
+
+        try:
+
+            available_tools = self.tool_registry.get_tool_metadata()
+
+            query_lower = query.lower()
+
+            selected_tools = []
+
+            tool_keywords = {
+                "sql": ["sql", "database", "query", "postgres"],
+                "rag": ["document", "pdf", "knowledge", "retrieve"],
+                "memory": ["remember", "history", "context"],
+                "search": ["search", "find", "lookup"],
+            }
+
+            for tool in available_tools:
+
+                tool_name = tool.get("name", "").lower()
+
+                matched = False
+
+                for key, keywords in tool_keywords.items():
+
+                    if key in tool_name:
+
+                        if any(k in query_lower for k in keywords):
+                            matched = True
+
+                if matched:
+                    selected_tools.append(tool)
+
+            # fallback safety
+            if not selected_tools:
+                selected_tools = available_tools[:3]
+
+            return selected_tools
+
+        except Exception as e:
+            print("⚠️ Tool selection failed:", str(e))
+
+            return self.tool_registry.get_tool_metadata()[:3]
+
+    # ============================================================
+    # 🔥 MAIN EXECUTION
+    # ============================================================
+
+    async def _self_heal_execute(
+    self,
+    executor,
+    *args,
+    retries=3,
+    delay=1,
+    **kwargs
+):
+
+        last_error = None
+
+        for attempt in range(retries):
+
+            try:
+
+                return await executor(*args, **kwargs)
+
+            except Exception as e:
+
+                last_error = e
+                print("🛠 Self-healing activated...")
+
+                print(
+                    f"⚠️ Retry {attempt + 1}/{retries} failed:",
+                    str(e)
+                )
+
+                await asyncio.sleep(delay)
+
+        return {
+            "error": str(last_error),
+            "failed": True
+        }
+
+    async def _recursive_execute(
+    self,
+    subtask: str,
+    depth: int = 0,
+    max_depth: int = 3,
+):
+
+        if depth >= max_depth:
+            return {
+                "answer": f"[MAX DEPTH REACHED] {subtask}"
+            }
+
+        try:
+
+            # 🧠 Dynamic tool selection
+            selected_tools = self._select_relevant_tools(subtask)
+
+            # 🤖 Planner
+            planner_result = await self._self_heal_execute(
+                self.fallback_executor.execute,
+                model_chain=["gpt-4o-mini"],
+                agent_callable=self.planner.plan_agentic,
+                query=subtask,
+                scratchpad="",
+                tools=selected_tools,
             )
 
-        if total_cost > self.max_cost_per_request:
-            raise RuntimeError(
-                f"Cost budget exceeded "
-                f"(${total_cost:.6f} > ${self.max_cost_per_request})"
-            )
+            planner_response = planner_result["content"]
 
-    # ------------------------------------------------------------
-    # MAIN EXECUTION
-    # ------------------------------------------------------------
+            if not isinstance(planner_response, dict):
+
+                return {
+                    "answer": str(planner_response)
+                }
+
+            # ====================================================
+            # ✅ FINAL ANSWER
+            # ====================================================
+            self.agent_scores.record_success("planner")
+
+            if planner_response.get("type") == "final":
+
+                return {
+                    "answer": planner_response["content"]
+                }
+
+            # ====================================================
+            # 🔁 RECURSIVE SUBTASKS
+            # ====================================================
+
+            elif planner_response.get("type") == "subtasks":
+
+                child_tasks = planner_response.get(
+                    "subtasks",
+                    []
+                )
+
+                results = []
+
+                for child in child_tasks:
+
+                    child_result = await self._recursive_execute(
+                        child,
+                        depth=depth + 1,
+                        max_depth=max_depth,
+                    )
+
+                    results.append(
+                        child_result.get("answer", "")
+                    )
+
+                combined = "\n".join(results)
+
+                return {
+                    "answer": combined
+                }
+
+            return {
+                "answer": "Planner returned unknown type"
+            }
+
+        except Exception as e:
+
+            self.agent_scores.record_failure("planner")
+
+            return {
+                "answer": f"[RECURSIVE ERROR] {str(e)}"
+            }
+        
+    
     async def run_task(self, query: str) -> Dict:
 
         async def task_func(query: str) -> Dict:
@@ -104,21 +325,15 @@ class GenAIEngine:
             start_time = time.time()
             trace = AgentTrace()
 
-            total_prompt_tokens = 0
-            total_completion_tokens = 0
-            total_tokens = 0
-            total_cost = 0.0
-
             # ---------------- GUARDRAILS ----------------
-
             if detect_prompt_injection(query):
                 raise ValueError("Prompt injection detected")
 
             if not is_task_allowed(query):
-                raise PermissionError("Task not allowed by scope guard")
+                raise PermissionError("Task not allowed")
 
             # ============================================================
-            # 🔥 OFFLINE FALLBACK WRAPPER (FIXED + OLLAMA READY)
+            # 🔥 SAFE EXECUTE (OPENAI → OLLAMA)
             # ============================================================
 
             async def safe_execute(agent_callable, **kwargs):
@@ -128,188 +343,202 @@ class GenAIEngine:
                         agent_callable=agent_callable,
                         **kwargs
                     )
-
                 except Exception as e:
-                    print("⚠️ OpenAI failed → Switching to OLLAMA:", str(e))
+                    print("⚠️ OpenAI failed → OLLAMA:", str(e))
 
-                    agent_name = agent_callable.__name__
-                    query = kwargs.get("query", "")
-
-                    # ---------------- DECOMPOSITION ----------------
-                    if agent_name == "decompose":
-
-                        prompt = f"""
-            Break this task into subtasks:
-            {query}
-
-            Return JSON:
-            {{
-            "is_complex": true/false,
-            "subtasks": []
-            }}
-            """
-
-                        response = await self.ollama_client.generate(prompt)
-
-                        return {
-                            "content": {
-                                "is_complex": False,
-                                "subtasks": [query]
-                            },
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cost_usd": 0.0,
-                        }
-
-                    # ---------------- PLANNER ----------------
-                    elif agent_name == "plan_agentic":
-
-                        prompt = f"""
-            Solve this task step-by-step:
-            {query}
-            """
-
-                        response = await self.ollama_client.generate(prompt)
-
+                    try:
+                        response = await self.ollama_client.generate(
+                            f"{kwargs.get('query', '')}"
+                        )
                         return {
                             "content": {
                                 "type": "final",
                                 "content": response
-                            },
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cost_usd": 0.0,
+                            }
                         }
-
-                    # ---------------- REFLECTION ----------------
-                    elif agent_name == "reflect":
-                        return {
-                            "content": {
-                                "approved": True,
-                                "confidence": 0.8,
-                                "feedback": "Approved via local model"
-                            },
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cost_usd": 0.0,
-                        }
-
-                    # ---------------- SYNTHESIS ----------------
-                    elif agent_name == "run":
-
-                        combined = kwargs.get("agent_outputs", {}).get("raw_answer", "")
-
-                        prompt = f"""
-            Combine and refine this answer:
-            {combined}
-            """
-
-                        response = await self.ollama_client.generate(prompt)
-
-                        return {
-                            "content": response,
-                            "prompt_tokens": 0,
-                            "completion_tokens": 0,
-                            "total_tokens": 0,
-                            "cost_usd": 0.0,
-                        }
-
-                    return {
-                        "content": "[OLLAMA FALLBACK FAILED]",
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                        "cost_usd": 0.0,
-                    }
-                
+                    except Exception:
+                        return {"content": "[SYSTEM FALLBACK]"}
 
             # ============================================================
-            # 🔥 SUBTASK PROCESSOR (REQUIRED)
+            # 🧠 LEARNING FROM MEMORY (NEW FEATURE)
+            # ============================================================
+
+            past_context = self.memory.search(query, limit=3)
+            context_text = "\n".join([m["content"] for m in past_context]) if past_context else ""
+
+            # ============================================================
+            # 🔥 DECOMPOSITION
+            # ============================================================
+
+            decomp_result = await safe_execute(
+                self.decomposer.decompose,
+                query=query
+            )
+
+            decomp_data = decomp_result["content"]
+
+            if not isinstance(decomp_data, dict) or not decomp_data.get("is_complex"):
+                subtasks = [query]
+            else:
+                subtasks = decomp_data.get("subtasks", [query])
+
+            # ============================================================
+            # 🧠 SUPERVISOR
+            # ============================================================
+
+            supervisor_decision = await self.supervisor.decide(query)
+
+            # ============================================================
+            # 🔥 SUBTASK PROCESSOR
             # ============================================================
 
             async def process_subtask(subtask: str):
 
-                scratchpad = ""
-                final_answer = None
-
-                local_prompt_tokens = 0
-                local_completion_tokens = 0
-                local_tokens = 0
-                local_cost = 0.0
-
                 try:
-                    planner_result = await safe_execute(
-                        self.planner.plan_agentic,
+                    # ============================================================
+                    # 🔥 REACT LOOP (THINK → TOOL → OBSERVE)
+                    # ============================================================
+
+                    context_text = self._retrieve_relevant_memory(subtask)
+
+                    max_steps = 5
+                    scratchpad = ""
+                    final_answer = None
+
+                    for step in range(max_steps):
+
+                        enhanced_query = f"""
+                    Relevant past knowledge:
+                    {context_text}
+
+                    Current task:
+                    {subtask}
+
+                    Previous reasoning:
+                    {scratchpad}
+                    """
+
+                        recursive_result = await self._recursive_execute(
+                            subtask=subtask,
+                            depth=0,
+                            max_depth=3,
+                        )
+
+                        final_answer = recursive_result["answer"]
+
+                    # ============================================================
+                    # 🧠 FALLBACK IF NO ANSWER
+                    # ============================================================
+
+                    if not final_answer:
+                        final_answer = "Could not complete task fully"
+
+                    # ============================================================
+                    # 🧠 MULTI-CRITIC (ALWAYS RUN)
+                    # ============================================================
+
+                    logic = await safe_execute(
+                        self.logic_critic.critique,
                         query=subtask,
-                        scratchpad=scratchpad,
-                        tools=self.tool_registry.get_tool_metadata(),
+                        answer=final_answer
                     )
 
-                    planner_response = planner_result["content"]
+                    risk = await safe_execute(
+                        self.risk_critic.critique,
+                        query=subtask,
+                        answer=final_answer
+                    )
 
-                    local_prompt_tokens += planner_result["prompt_tokens"]
-                    local_completion_tokens += planner_result["completion_tokens"]
-                    local_tokens += planner_result["total_tokens"]
-                    local_cost += planner_result["cost_usd"]
+                    optimization = await safe_execute(
+                        self.optimization_critic.critique,
+                        query=subtask,
+                        answer=final_answer
+                    )
 
-                    if planner_response["type"] == "final":
-                        final_answer = planner_response["content"]
-                    else:
-                        final_answer = "No final answer generated"
+                    decision = self.critic_aggregator.aggregate(
+                        logic.get("content", {}),
+                        risk.get("content", {}),
+                        optimization.get("content", {})
+                    )
+
+                    self.agent_scores.record_success("multi_critic")
+
+                    # ============================================================
+                    # 🔁 IMPROVEMENT LOOP + LEARNING
+                    # ============================================================
+
+                    if not decision.get("approve", True):
+
+                        feedback = "\n".join(decision.get("feedback", []))
+
+                        improved_prompt = f"""
+            Improve this answer:
+
+            {subtask}
+
+            Current Answer:
+            {final_answer}
+
+            Feedback:
+            {feedback}
+            """
+
+                        improved = await safe_execute(
+                            self.planner.plan_agentic,
+                            query=improved_prompt,
+                            scratchpad="",
+                            tools=self.tool_registry.get_tool_metadata(),
+                        )
+
+                        improved_content = improved.get("content", {})
+
+                        if isinstance(improved_content, dict) and improved_content.get("type") == "final":
+                            final_answer = improved_content.get("content", final_answer)
+
+                        # 🧠 SAVE LEARNING
+                        self.memory.add_memory(
+                            content=f"LEARNING:\nTask:{subtask}\nMistake:{feedback}\nImproved:{final_answer}"
+                        )
+
+                    return {"answer": final_answer}
 
                 except Exception as e:
-                    print("❌ Subtask execution failed:", str(e))
-                    final_answer = f"[ERROR] {str(e)}"
 
-                return {
-                    "answer": final_answer,
-                    "prompt_tokens": local_prompt_tokens,
-                    "completion_tokens": local_completion_tokens,
-                    "total_tokens": local_tokens,
-                    "cost": local_cost,
-                }
-            
-           # 🚀 Run all subtasks (SAFE VERSION)
+                    self.agent_scores.record_failure("multi_critic")
+                    print("❌ Subtask error:", str(e))
+                    return {"answer": f"[ERROR] {str(e)}"}
 
-            if not subtasks:
-                subtasks = [query]  # fallback safety
+            # ============================================================
+            # 🚀 EXECUTION STRATEGY
+            # ============================================================
 
-            tasks = []
+            if supervisor_decision.get("parallel", True):
+                tasks = [
+                    process_subtask(s)
+                    for s in subtasks[:supervisor_decision.get("max_workers", 3)]
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                results = []
+                for s in subtasks:
+                    res = await process_subtask(s)
+                    results.append(res)
 
-            for subtask in subtasks:
-                try:
-                    tasks.append(process_subtask(subtask))
-                except Exception as e:
-                    print("⚠️ Subtask creation failed:", str(e))
-
-            # If no tasks created → fallback
-            if not tasks:
-                return {
-                    "request_id": str(uuid.uuid4()),
-                    "answer": self._offline_fallback(query),
-                    "execution_time_sec": 0,
-                    "total_prompt_tokens": 0,
-                    "total_completion_tokens": 0,
-                    "total_tokens": 0,
-                    "total_cost_usd": 0,
-                    "agent_trace": [],
-                }
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # ============================================================
+            # 🧠 COLLECT RESULTS
+            # ============================================================
 
             subtask_results = []
 
-            for res in results:
-                if isinstance(res, Exception):
-                    print("⚠️ Subtask failed:", str(res))
+            for r in results:
+                if isinstance(r, Exception):
                     subtask_results.append("Subtask failed")
                 else:
-                    subtask_results.append(res.get("answer", "No answer"))
+                    subtask_results.append(r.get("answer", "No answer"))
 
-            # ---------------- SYNTHESIS ----------------
+            # ============================================================
+            # 🔥 SYNTHESIS
+            # ============================================================
 
             combined_answer = "\n\n".join(subtask_results)
 
@@ -319,9 +548,11 @@ class GenAIEngine:
                 task=query,
             )
 
-            refined_answer = synth_result["content"]
+            refined_answer = synth_result.get("content", combined_answer)
 
-            # ---------------- MEMORY SAVE ----------------
+            # ============================================================
+            # 💾 MEMORY SAVE
+            # ============================================================
 
             self.memory.add_memory(
                 content=f"Query: {query}\nAnswer: {refined_answer}"
@@ -331,12 +562,12 @@ class GenAIEngine:
                 "request_id": request_id,
                 "answer": refined_answer,
                 "execution_time_sec": round(time.time() - start_time, 2),
-                "total_prompt_tokens": total_prompt_tokens,
-                "total_completion_tokens": total_completion_tokens,
-                "total_tokens": total_tokens,
-                "total_cost_usd": round(total_cost, 6),
                 "agent_trace": trace.export(),
             }
+
+        # ============================================================
+        # 🔥 GLOBAL FALLBACK
+        # ============================================================
 
         try:
             return await safe_run(self.db, task_func, query=query)
@@ -346,63 +577,7 @@ class GenAIEngine:
 
             return {
                 "request_id": str(uuid.uuid4()),
-                "answer": self._offline_fallback(query),
+                "answer": "System fallback response",
                 "execution_time_sec": 0,
-                "total_prompt_tokens": 0,
-                "total_completion_tokens": 0,
-                "total_tokens": 0,
-                "total_cost_usd": 0,
                 "agent_trace": [],
             }
-
-    # ------------------------------------------------------------
-    # 🔥 OFFLINE FALLBACK
-    # ------------------------------------------------------------
-    def _offline_fallback(self, query: str) -> str:
-        q = query.lower()
-
-        if "bottleneck" in q:
-            return (
-                "🔍 Bottleneck Analysis (Offline Mode):\n\n"
-                "- Possible causes:\n"
-                "  • Resource overload\n"
-                "  • Task delays\n"
-                "  • Inefficient workflow\n\n"
-                "- Suggestions:\n"
-                "  • Optimize task distribution\n"
-                "  • Parallel processing\n"
-                "  • Monitor slow components\n"
-            )
-
-        elif "analyze" in q:
-            return (
-                "📊 Basic Analysis (Offline Mode):\n\n"
-                "- Input processed\n"
-                "- Pattern analysis done\n"
-                "- Running without external AI\n"
-            )
-
-        else:
-            return (
-                "⚙️ System running in offline mode.\n"
-                "Basic processing completed successfully."
-            )
-
-    # ------------------------------------------------------------
-    # METRIC LOGGER
-    # ------------------------------------------------------------
-    def _log_metric(
-        self,
-        request_id: str,
-        agent_name: str,
-        latency_ms: int,
-        success: bool,
-    ):
-        metric = AgentMetric(
-            request_id=request_id,
-            agent_name=agent_name,
-            latency_ms=latency_ms,
-            success=success,
-        )
-        self.db.add(metric)
-        self.db.commit()
