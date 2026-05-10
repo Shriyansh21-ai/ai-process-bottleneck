@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sentence-transformers
+torch
+transformers
+huggingface-hub
+aiohttp
+python-dotenv
+psycopg2-binary
+sqlalchemy
+pydantic
+numpy
+scikit-learn
+pgvector

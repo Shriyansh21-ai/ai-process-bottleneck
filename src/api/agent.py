@@ -8,6 +8,7 @@ from src.models.genai_task_log import GenAITaskLog
 from src.genai.jobs.manager import run_agent_job
 from src.genai.sessions.session_manager import SessionManager
 from fastapi.responses import StreamingResponse
+from src.genai.services.llm_service import generate_response
 import time
 
 router = APIRouter()
@@ -116,4 +117,15 @@ def run_stream(
         stream_generator(),
         media_type="text/plain"
     )
+
+@router.post("/chat")
+async def chat(query: dict):
+
+    user_message = query["message"]
+
+    response = await generate_response(user_message)
+
+    return {
+        "response": response
+    }
 

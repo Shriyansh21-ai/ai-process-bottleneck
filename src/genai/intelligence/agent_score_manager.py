@@ -1,9 +1,11 @@
+import threading
+
 class AgentScoreManager:
 
     def __init__(self):
 
         self.agent_scores = {}
-
+        self.lock = threading.Lock()
     # ====================================================
     # ✅ REGISTER AGENT
     # ====================================================
@@ -26,7 +28,8 @@ class AgentScoreManager:
 
         self.register_agent(agent_name)
 
-        self.agent_scores[agent_name]["success"] += 1
+        with self.lock:
+            self.agent_scores[agent_name]["success"] += 1
 
         self._recalculate(agent_name)
 
@@ -38,7 +41,8 @@ class AgentScoreManager:
 
         self.register_agent(agent_name)
 
-        self.agent_scores[agent_name]["failure"] += 1
+        with self.lock:
+            self.agent_scores[agent_name]["failure"] += 1
 
         self._recalculate(agent_name)
 
@@ -74,6 +78,23 @@ class AgentScoreManager:
     # ✅ GET ALL SCORES
     # ====================================================
 
+
     def export_scores(self):
 
         return self.agent_scores
+    
+    # ====================================================
+    # ✅ AGENT HEALTH
+    # ====================================================
+
+    def get_health(self, agent_name: str):
+
+        score = self.get_score(agent_name)
+
+        if score >= 0.8:
+            return "excellent"
+
+        elif score >= 0.5:
+            return "stable"
+
+        return "unstable"

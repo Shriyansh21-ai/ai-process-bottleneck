@@ -33,6 +33,7 @@ from src.db.base import Base
 from fastapi import HTTPException
 from datetime import datetime
 from src.models.audit_log import AuditLog
+from src.genai.model_loader import get_embedding_model
 
 # 🔥 ADD THIS LINE (VERY IMPORTANT)
 import src.models
@@ -157,3 +158,15 @@ async def run_stream(req: QueryRequest):
 
     finally:
         db.close()
+
+@app.get("/health")
+async def health():
+
+    return {
+        "status": "healthy"
+    }
+
+@app.on_event("startup")
+async def load_models():
+    print("🚀 Preloading embedding model...")
+    get_embedding_model()

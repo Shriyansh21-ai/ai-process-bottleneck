@@ -34,6 +34,16 @@ class ToolRegistry:
                     tool_name = getattr(obj, "_tool_name")
                     self.register(tool_name, obj)
 
+    def get_tool_metadata(self):
+        """Get metadata for all registered tools"""
+        metadata = []
+        for name, func in self._tools.items():
+            metadata.append({
+                "name": name,
+                "description": getattr(func, "_tool_description", "")
+            })
+        return metadata
+
 
 # 🔥 Tool Decorator
 def ai_tool(name: str, description: str):
@@ -43,13 +53,4 @@ def ai_tool(name: str, description: str):
         func._tool_description = description
         return func
     return decorator
-
-def get_tool_metadata(self):
-    metadata = []
-    for name, func in self._tools.items():
-        metadata.append({
-            "name": name,
-            "description": getattr(func, "_tool_description", "")
-        })
-    return metadata
 

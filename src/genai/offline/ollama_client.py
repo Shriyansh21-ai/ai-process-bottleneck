@@ -1,34 +1,57 @@
-import httpx
-import asyncio
+import aiohttp
+
+from src.genai.config.model_config import (
+    OLLAMA_MODEL,
+    OLLAMA_BASE_URL
+)
 
 
 class OllamaClient:
 
-    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3"):
-        self.base_url = base_url
-        self.model = model
+    async def generate(
+        self,
+        prompt: str,
+        model: str = OLLAMA_MODEL
+    ):
 
-    async def generate(self, prompt: str, timeout: int = 20) -> str:
-        """
-        Generate response from Ollama
-        """
+        url = f"{OLLAMA_BASE_URL}/api/generate"
+
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False
+        }
+
+        timeout = aiohttp.ClientTimeout(total=120)
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/generate",
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                        "stream": False
-                    }
-                )
 
-                response.raise_for_status()
-                data = response.json()
+            async with aiohttp.ClientSession(
+                timeout=timeout
+            ) as session:
 
-                return data.get("response", "").strip()
+                async with session.post(
+                    url,
+                    json=payload
+                ) as response:
+
+                    if response.status != 200:
+
+                        error_text = await response.text()
+
+                        raise Exception(
+                            f"Ollama API Error: {error_text}"
+                        )
+
+                    data = await response.json()
+
+                    return data.get(
+                        "response",
+                        ""
+                    )
 
         except Exception as e:
-            print("❌ Ollama Error:", str(e))
-            raise e
+
+            raise Exception(
+                f"Ollama connection failed: {str(e)}"
+            )
