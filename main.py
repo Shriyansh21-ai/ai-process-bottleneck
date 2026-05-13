@@ -5,6 +5,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import json
 
+from src.genai.offline.ollama_client import OllamaClient
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -34,9 +36,28 @@ from fastapi import HTTPException
 from datetime import datetime
 from src.models.audit_log import AuditLog
 from src.genai.model_loader import get_embedding_model
+from src.api.routes.health import router as health_router
+from src.api.routes.generate import router as generate_router
+from src.api.routes.embeddings import router as embeddings_router
+from src.api.routes.documents import router as documents_router
+from src.api.routes.search import router as search_router
+from src.api.routes.rag import router as rag_router
+from src.api.routes.ingest import router as ingest_router
+from src.api.routes.chat import router as chat_router
+from src.api.routes.stream_chat import (
+    router as stream_chat_router
+)
+
+from src.db.models.document import Document
 
 # 🔥 ADD THIS LINE (VERY IMPORTANT)
 import src.models
+import logging
+
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
 
 setup_logging()
 
@@ -62,6 +83,16 @@ app.include_router(analysis_router, prefix="/api")
 
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(TimingMiddleware)
+
+app.include_router(health_router)
+app.include_router(generate_router)
+app.include_router(embeddings_router)
+app.include_router(documents_router)
+app.include_router(search_router)
+app.include_router(rag_router)
+app.include_router(ingest_router)
+app.include_router(chat_router, prefix="/chat", tags=["Chat"])
+app.include_router(stream_chat_router)
 
 app.add_exception_handler(Exception, global_exception_handler)
 
@@ -167,6 +198,35 @@ async def health():
     }
 
 @app.on_event("startup")
-async def load_models():
-    print("🚀 Preloading embedding model...")
+async def startup_event():
+
+    print("🚀 Backend starting...")
+
+    # Create database tables
+    Base.metadata.create_all(bind=engine)
+
+    print("✅ Database connected")
+
+    # Preload embedding model
     get_embedding_model()
+
+    print("✅ Embedding model loaded")
+
+    # Verify Ollama connection
+    ollama = OllamaClient()
+
+    try:
+
+        response = await ollama.generate("Hello")
+
+        if response:
+            print("✅ Ollama connected")
+
+        else:
+            print("❌ Ollama not responding")
+
+    except Exception as e:
+
+        print(f"❌ Ollama connection failed: {e}")
+
+    print("🚀 Backend ready")
