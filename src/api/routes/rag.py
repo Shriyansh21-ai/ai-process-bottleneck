@@ -28,12 +28,12 @@ async def rag_query(
     documents = db.query(Document).all()
 
     relevant_docs = retrieve_context(
-        query=query,
-        documents=documents
-    )
+    db=db,
+    query=query
+)
 
     context = "\n".join([
-        doc.content
+        doc["content"]
         for doc in relevant_docs
     ])
 

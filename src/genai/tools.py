@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 from typing import Dict, Any
-from rag.retriever import retrieve_context
+from src.rag.retriever import retrieve_context
 from src.models.case import Case
 
 def search_cases(db: Session, query: str) -> str:

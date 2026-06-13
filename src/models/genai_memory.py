@@ -1,5 +1,12 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime
 from datetime import datetime
+
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime
+)
 
 from src.db.base import Base
 
@@ -16,8 +23,8 @@ class GenAIMemory(Base):
 
     session_id = Column(
         String,
-        index=True,
-        nullable=False
+        nullable=False,
+        index=True
     )
 
     content = Column(

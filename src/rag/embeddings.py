@@ -1,40 +1,49 @@
 import os
 
-from sentence_transformers import SentenceTransformer
-
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-local_model = SentenceTransformer(
-    "sentence-transformers/all-MiniLM-L6-v2"
+from src.genai.model_loader import (
+    get_embedding_model
 )
 
+OPENAI_API_KEY = os.getenv(
+    "OPENAI_API_KEY"
+)
 
-if OPENAI_API_KEY:
-
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=OPENAI_API_KEY
-    )
-
-else:
-
-    client = None
+client = None
 
 
-def embed_text(text: str) -> list[float]:
+def get_openai_client():
 
-    # =========================
+    global client
+
+    if client is None and OPENAI_API_KEY:
+
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=OPENAI_API_KEY
+        )
+
+    return client
+
+
+def embed_text(
+    text: str
+) -> list[float]:
+
+    # =====================================
     # OPENAI PRIMARY
-    # =========================
+    # =====================================
 
-    if client is not None:
+    openai_client = get_openai_client()
+
+    if openai_client is not None:
 
         try:
 
-            response = client.embeddings.create(
+            response = openai_client.embeddings.create(
+
                 model="text-embedding-3-small",
+
                 input=text
             )
 
@@ -42,12 +51,26 @@ def embed_text(text: str) -> list[float]:
 
         except Exception as e:
 
-            print(f"OpenAI embedding failed: {e}")
+            print(
+                f"OpenAI embedding failed: {e}"
+            )
 
-    # =========================
+    # =====================================
     # LOCAL FALLBACK
-    # =========================
+    # =====================================
 
-    embedding = local_model.encode(text)
+    try:
 
-    return embedding.tolist()
+        model = get_embedding_model()
+
+        embedding = model.encode(text)
+
+        return embedding.tolist()
+
+    except Exception as e:
+
+        print(
+            f"Local embedding failed: {e}"
+        )
+
+        return []

@@ -1012,7 +1012,6 @@ Feedback:
                         # ========================================
 
                         self.memory.add_memory(
-                            session_id=self.session_id,
                             content=f"""
 LEARNING:
 Task: {subtask}
@@ -1148,7 +1147,6 @@ Improved:
             # ====================================================
 
             self.memory.add_memory(
-                session_id=self.session_id,
                 content=f"""
 Query:
 {query}

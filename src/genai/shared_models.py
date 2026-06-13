@@ -1,4 +1,18 @@
-from src.genai.model_loader import get_embedding_model
+from src.genai.model_loader import (
+    get_embedding_model
+)
+
+# ==========================================
+# SHARED EMBEDDING MODEL
+# ==========================================
+
+embedding_model = get_embedding_model()
+
+
+# ==========================================
+# OPTIONAL ACCESSOR
+# ==========================================
 
 def get_model():
-    return get_embedding_model()
+
+    return embedding_model

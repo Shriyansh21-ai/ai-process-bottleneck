@@ -1,5 +1,5 @@
 from src.genai.agents.base import BaseAgent
-from rag.retriever import retrieve_context
+from src.rag.retriever import retrieve_context
 
 class RetrieverAgent(BaseAgent):
     name = "retriever-agent"

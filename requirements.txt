@@ -12,3 +12,12 @@ pydantic
 numpy
 scikit-learn
 pgvector
+
+{
+  "title": "Forex Risk Report",
+  "source": "internal_report",
+  "doc_type": "finance",
+  "text": "Foreign exchange fluctuations can negatively affect international businesses. Currency volatility increases repayment risks and reduces profitability during cross-border transactions."
+}
+
+What are the risks of currency volatility in global transactions?

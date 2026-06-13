@@ -1,7 +1,10 @@
 def build_rag_prompt(query: str, contexts: list):
 
     joined_context = "\n\n".join(
-        [c["content"] for c in contexts]
+       [
+            c["content"]
+            for c in contexts
+        ]
     )
 
     prompt = f"""

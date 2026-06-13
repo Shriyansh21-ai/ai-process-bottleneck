@@ -7,8 +7,6 @@ from sqlalchemy import (
 
 from sqlalchemy.orm import relationship
 
-from sqlalchemy import JSON
-
 from src.db.base import Base
 
 
@@ -16,10 +14,19 @@ class DocumentChunk(Base):
 
     __tablename__ = "document_chunks"
 
+    # ==========================================
+    # PRIMARY KEY
+    # ==========================================
+
     id = Column(
-        Integer,
-        primary_key=True
-    )
+    Integer,
+    primary_key=True,
+    autoincrement=True
+)
+
+    # ==========================================
+    # DOCUMENT RELATION
+    # ==========================================
 
     document_id = Column(
         Integer,
@@ -29,15 +36,26 @@ class DocumentChunk(Base):
         )
     )
 
+    # ==========================================
+    # CHUNK CONTENT
+    # ==========================================
+
     content = Column(
         Text,
         nullable=False
     )
 
-    embedding = Column(JSON)
+    # ==========================================
+    # CHUNK POSITION
+    # ==========================================
+
+    chunk_index = Column(
+        Integer,
+        nullable=True
+    )
 
     # ==========================================
-    # SOURCE METADATA
+    # OPTIONAL SOURCE METADATA
     # ==========================================
 
     section = Column(

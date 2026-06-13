@@ -7,6 +7,7 @@ import json
 
 from src.genai.offline.ollama_client import OllamaClient
 
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -31,6 +32,7 @@ from src.core.exceptions import global_exception_handler
 from src.genai.engine import GenAIEngine
 from fastapi.middleware.cors import CORSMiddleware
 from src.db.session import engine, SessionLocal
+from src.agent.controller import AgentController
 from src.db.base import Base
 from fastapi import HTTPException
 from datetime import datetime
@@ -47,6 +49,16 @@ from src.api.routes.chat import router as chat_router
 from src.api.routes.stream_chat import (
     router as stream_chat_router
 )
+from src.db.init_qdrant import (
+    init_qdrant
+)
+from src.api.routes.approval import (
+    router as approval_router
+)
+
+from src.api.routes.agent_runs import (
+    router as agent_runs_router
+)
 
 from src.db.models.document import Document
 
@@ -60,6 +72,7 @@ logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 
 setup_logging()
+init_qdrant()
 
 app = FastAPI(title="Agentic Process Intelligence")
 
@@ -93,6 +106,12 @@ app.include_router(rag_router)
 app.include_router(ingest_router)
 app.include_router(chat_router, prefix="/chat", tags=["Chat"])
 app.include_router(stream_chat_router)
+app.include_router(
+    approval_router
+)
+app.include_router(
+    agent_runs_router
+)
 
 app.add_exception_handler(Exception, global_exception_handler)
 
@@ -110,8 +129,11 @@ async def run_query(req: QueryRequest):
         print(f" Incoming Query: {req.query}")
         print(f" Session ID: {req.session_id}")
 
-        engine = GenAIEngine(db=db, session_id=req.session_id)
-        result = await engine.run_task(req.query)
+        controller = AgentController(db=db)
+
+        result = await controller.run(
+            user_query=req.query
+        )
 
         print(f" Result: {result}")
 

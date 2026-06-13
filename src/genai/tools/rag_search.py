@@ -1,4 +1,4 @@
-from rag.retriever import retrieve_context
+from src.rag.retriever import retrieve_context
 from src.genai.tools import Tool
 
 class RAGSearchTool(Tool):

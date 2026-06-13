@@ -1,26 +1,23 @@
-from sqlalchemy import text
-from src.db.session import SessionLocal
-from src.genai.embeddings import embed_text
+from src.rag.retriever import (
+    retrieve_context
+)
 
-def retrieve_memory(input_data: dict):
-    query_text = input_data.get("query", "")
-    top_k = input_data.get("top_k", 3)
 
-    embedding = embed_text(query_text)
+def rag_search(input_data: dict):
 
-    sql = """
-    SELECT content
-    FROM genai_memory
-    ORDER BY embedding <-> :embedding
-    LIMIT :top_k
-    """
+    db = input_data["db"]
 
-    db = SessionLocal()
-    try:
-        result = db.execute(
-            text(sql),
-            {"embedding": embedding, "top_k": top_k}
-        )
-        return [row[0] for row in result.fetchall()]
-    finally:
-        db.close()
+    query = input_data["query"]
+
+    limit = input_data.get(
+        "top_k",
+        5
+    )
+
+    results = retrieve_context(
+        db=db,
+        query=query,
+        limit=limit
+    )
+
+    return results

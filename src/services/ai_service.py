@@ -28,6 +28,15 @@ async def generate_rag_response(
         query
     )
 
+    if not contexts:
+
+        return {
+
+            "answer": "No relevant information found.",
+
+            "sources": []
+        }
+
     # ==========================================
     # LOAD CONVERSATION MEMORY
     # ==========================================
