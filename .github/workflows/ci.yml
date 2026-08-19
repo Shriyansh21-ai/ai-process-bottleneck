@@ -1,0 +1,165 @@
+name: CI
+
+# Milestone 5 CI pipeline.
+#
+#   pull_request / push to main  ->  lint + tests + migration check + docker build
+#
+# No production secrets are required: the unit suite runs on SQLite (see
+# tests/conftest.py) and the migration job uses a throwaway Postgres service.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  # Keep torch CPU-only (matches the Dockerfile) so runners don't pull CUDA.
+  PIP_EXTRA_INDEX_URL: "https://download.pytorch.org/whl/cpu"
+
+jobs:
+  # ---------------------------------------------------------------
+  # 1. Syntax/import validation + unit & integration tests (SQLite)
+  # ---------------------------------------------------------------
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch first (matches the Dockerfile) so we don't pull CUDA.
+          pip install torch==2.11.0 --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Syntax / compile check
+        run: python -m compileall -q src main.py alembic
+
+      - name: Run tests
+        # conftest.py provides a dummy DATABASE_URL and a SQLite override, so
+        # neither PostgreSQL nor OpenAI/Ollama are needed here.
+        run: python -m pytest -ra
+
+  # ---------------------------------------------------------------
+  # 2. Alembic migration validation against a real PostgreSQL
+  # ---------------------------------------------------------------
+  migrations:
+    name: Migration check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg2://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch first (matches the Dockerfile) so we don't pull CUDA.
+          pip install torch==2.11.0 --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: alembic upgrade head
+        run: python -m alembic upgrade head
+
+      - name: alembic downgrade base (reversibility)
+        run: python -m alembic downgrade base
+
+      - name: alembic upgrade head (re-apply)
+        run: python -m alembic upgrade head
+
+  # ---------------------------------------------------------------
+  # 3. Docker image build validation (+ lightweight smoke)
+  # ---------------------------------------------------------------
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: [test]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ai-process-bottleneck:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (runs migrations, then checks /health & /health/ready)
+        run: |
+          # --network host lets the container reach the postgres service on
+          # localhost:5432 and exposes uvicorn on the runner's localhost:8000.
+          docker run -d --name smoke --network host \
+            -e DATABASE_URL="postgresql+psycopg2://ci:ci@localhost:5432/ci" \
+            ai-process-bottleneck:ci
+          echo "waiting for container to serve /health ..."
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then
+            echo "container did not become healthy in time" >&2
+            docker logs smoke || true
+            docker rm -f smoke
+            exit 1
+          fi
+          echo "=== /health ===";        curl -fsS http://localhost:8000/health;        echo
+          echo "=== /health/ready ===";  curl -fsS http://localhost:8000/health/ready;  echo
+          docker rm -f smoke

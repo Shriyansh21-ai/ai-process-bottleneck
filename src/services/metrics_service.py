@@ -4,6 +4,11 @@ from src.db.models.agent_run import (
     AgentRun
 )
 
+from src.services.agent_run_service import (
+    SUCCESS_STATUSES,
+    FAILED_STATUSES,
+)
+
 from src.db.models.step_execution import (
     StepExecution
 )
@@ -37,7 +42,7 @@ def get_success_runs(db):
         )
 
         .filter(
-            AgentRun.status == "success"
+            AgentRun.status.in_(SUCCESS_STATUSES)
         )
 
         .count()
@@ -57,7 +62,7 @@ def get_failure_runs(db):
         )
 
         .filter(
-            AgentRun.status == "failed"
+            AgentRun.status.in_(FAILED_STATUSES)
         )
 
         .count()

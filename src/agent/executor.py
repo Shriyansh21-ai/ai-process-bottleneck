@@ -190,7 +190,9 @@ class ToolExecutor:
 
                             status="success",
 
-                            execution_time_ms=duration
+                            execution_time_ms=duration,
+
+                            retry_count=attempt
                         )
 
                     except Exception as e:
@@ -306,7 +308,9 @@ class ToolExecutor:
 
                     error=last_error,
 
-                    execution_time_ms=duration
+                    execution_time_ms=duration,
+
+                    retry_count=attempt
                 )
 
             except Exception as e:

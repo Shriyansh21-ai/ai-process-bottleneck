@@ -14,7 +14,8 @@ def create_step_log(
     output_payload,
     status,
     error=None,
-    execution_time_ms=None
+    execution_time_ms=None,
+    retry_count=0
 ):
 
     try:
@@ -45,7 +46,9 @@ def create_step_log(
 
             error=error,
 
-            execution_time_ms=execution_time_ms
+            execution_time_ms=execution_time_ms,
+
+            retry_count=retry_count
         )
 
         db.add(row)

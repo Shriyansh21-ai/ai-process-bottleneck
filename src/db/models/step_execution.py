@@ -25,7 +25,8 @@ class StepExecution(Base):
         Integer,
         ForeignKey(
             "agent_runs.id"
-        )
+        ),
+        index=True
     )
 
     step_id = Column(
@@ -33,7 +34,8 @@ class StepExecution(Base):
     )
 
     tool_name = Column(
-        Text
+        Text,
+        index=True
     )
 
     input_payload = Column(
@@ -45,7 +47,8 @@ class StepExecution(Base):
     )
 
     status = Column(
-        Text
+        Text,
+        index=True
     )
 
     error = Column(

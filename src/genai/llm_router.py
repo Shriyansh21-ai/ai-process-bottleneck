@@ -17,6 +17,26 @@ from openai import OpenAI
 
 openai_client = None
 
+# ==========================================
+# LIGHTWEIGHT LLM TELEMETRY (additive)
+# ==========================================
+# Records the model/tier used by the most recent generate_response() call so
+# the run-summary layer can report it. This never alters generation behavior
+# or the generate_response() signature/return value.
+
+LAST_LLM_META = {"model": None, "mode": None}
+
+
+def _record_llm_meta(model, mode):
+    LAST_LLM_META["model"] = model
+    LAST_LLM_META["mode"] = mode
+
+
+def get_last_llm_meta():
+    """Return a copy of the last-used LLM model/mode ({'model','mode'})."""
+    return dict(LAST_LLM_META)
+
+
 if os.getenv("OPENAI_API_KEY"):
 
     try:
@@ -68,6 +88,8 @@ def generate_response(
 
             print("✅ Using OpenAI")
 
+            _record_llm_meta(model, "openai")
+
             return response.choices[0].message.content
 
         except Exception as e:
@@ -99,6 +121,8 @@ def generate_response(
 
             print("✅ Using Ollama")
 
+            _record_llm_meta("llama3", "ollama")
+
             return response["message"]["content"]
 
         except Exception as e:
@@ -113,6 +137,8 @@ def generate_response(
     print(
         "⚠️ Falling back to offline mode"
     )
+
+    _record_llm_meta(None, "offline")
 
     return json.dumps({
 

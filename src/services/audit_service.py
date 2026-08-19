@@ -10,10 +10,13 @@ def create_agent_run(
     plan,
     execution_result,
     verification_result,
-    status
+    status,
+    user_id=None
 ):
 
     run = AgentRun(
+
+        user_id=user_id,
 
         session_id=session_id,
 

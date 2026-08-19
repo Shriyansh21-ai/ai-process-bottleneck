@@ -1,16 +1,68 @@
-version: "3.9"
+# Production-like local stack (Milestone 5).
+#
+#   docker compose up --build
+#
+# Credentials come from .env (POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB).
+# No secrets are hard-coded here.
 
 services:
   postgres:
     image: pgvector/pgvector:pg15
     container_name: ai_postgres
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
+    # Bind to localhost only — the database is NOT exposed publicly.
+    # Remove this block entirely for a hardened deployment (the app reaches it
+    # over the private compose network regardless).
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Starting-point resource limits — tune for your host.
+    mem_limit: 1g
+    cpus: 1.0
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override any host-oriented DATABASE_URL so the app talks to the
+      # postgres service over the compose network.
+      DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      WEB_CONCURRENCY: "1"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the embedded Qdrant store and the HF model cache across restarts.
+      - qdrant_data:/app/qdrant_data
+      - hf_cache:/app/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    # The embedding model (torch + sentence-transformers) is memory heavy.
+    # 4g is a safe starting point; lower it only after observing real usage.
+    mem_limit: 4g
+    cpus: 2.0
 
 volumes:
   postgres_data:
+  qdrant_data:
+  hf_cache:

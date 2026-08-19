@@ -27,14 +27,28 @@ from src.api.routes.analysis import router as analysis_router
 from src.core.logging import setup_logging
 from src.core.middleware.request_id import RequestIDMiddleware
 from src.core.middleware.timing import TimingMiddleware
-from src.core.exceptions import global_exception_handler
+from src.core.exceptions import (
+    global_exception_handler,
+    validation_exception_handler,
+)
+from src.config import (
+    validate_config,
+    get_cors_origins,
+    cors_allow_credentials,
+    get_run_rate_limit,
+)
+from src.core.auth import get_current_active_user
+from src.db.models.user import User
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 from src.genai.engine import GenAIEngine
 from fastapi.middleware.cors import CORSMiddleware
 from src.db.session import engine, SessionLocal
 from src.agent.controller import AgentController
 from src.db.base import Base
-from fastapi import HTTPException
+from fastapi import HTTPException, Depends
 from datetime import datetime
 from src.models.audit_log import AuditLog
 from src.genai.model_loader import get_embedding_model
@@ -60,6 +74,10 @@ from src.api.routes.agent_runs import (
     router as agent_runs_router
 )
 
+from src.api.routes.agent_observability import (
+    router as agent_observability_router
+)
+
 from src.db.models.document import Document
 
 # 🔥 ADD THIS LINE (VERY IMPORTANT)
@@ -76,10 +94,14 @@ init_qdrant()
 
 app = FastAPI(title="Agentic Process Intelligence")
 
+# CORS is environment-driven (see src.config.get_cors_origins). Defaults to a
+# permissive "*" for local dev; set CORS_ALLOW_ORIGINS in production to lock it
+# down. Credentials are only enabled when origins are explicitly allow-listed
+# (a wildcard + credentials is unsafe and browser-invalid).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=get_cors_origins(),
+    allow_credentials=cors_allow_credentials(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -91,7 +113,8 @@ Base.metadata.create_all(bind=engine)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-app.include_router(auth_router, prefix="/api")
+# Auth endpoints live at /auth/* (register, login, me).
+app.include_router(auth_router)
 app.include_router(analysis_router, prefix="/api")
 
 app.add_middleware(RequestIDMiddleware)
@@ -112,7 +135,11 @@ app.include_router(
 app.include_router(
     agent_runs_router
 )
+app.include_router(
+    agent_observability_router
+)
 
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
 # Routes
@@ -123,13 +150,24 @@ class QueryRequest(BaseModel):
     session_id: str
 
 @app.post("/run")
-async def run_query(req: QueryRequest):
+@limiter.limit(get_run_rate_limit())
+async def run_query(
+    req: QueryRequest,
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+):
     db = SessionLocal()
     try:
         print(f" Incoming Query: {req.query}")
         print(f" Session ID: {req.session_id}")
 
-        controller = AgentController(db=db)
+        # The authenticated user owns this run. Identity is injected at the API
+        # boundary; the agent execution flow itself is unchanged.
+        controller = AgentController(
+            db=db,
+            session_id=req.session_id,
+            user_id=current_user.id,
+        )
 
         result = await controller.run(
             user_query=req.query
@@ -161,24 +199,32 @@ async def run_query(req: QueryRequest):
 
         return result
 
-    except Exception as e:
+    except Exception:
         db.rollback()
 
-        # 🔥 PRINT FULL ERROR (VERY IMPORTANT)
-        print("❌ ERROR OCCURRED:")
-        import traceback
-        traceback.print_exc()
+        # Full detail is logged server-side only — never returned to clients.
+        request_id = getattr(request.state, "request_id", None)
+        logger = getattr(request.state, "logger", logging.getLogger("error"))
+        logger.exception("run_query failed")
 
-        raise HTTPException(
+        return JSONResponse(
             status_code=500,
-            detail=f"Internal Error: {str(e)}"
+            content={
+                "error": "Internal server error",
+                "request_id": request_id,
+            },
         )
 
     finally:
         db.close()
 
 @app.post("/run-stream")
-async def run_stream(req: QueryRequest):
+@limiter.limit(get_run_rate_limit())
+async def run_stream(
+    req: QueryRequest,
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+):
     db = SessionLocal()
     try:
         engine = GenAIEngine(db=db, session_id=req.session_id)
@@ -205,24 +251,37 @@ async def run_stream(req: QueryRequest):
 
         return StreamingResponse(stream_generator(), media_type="text/plain")
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+
+        request_id = getattr(request.state, "request_id", None)
+        logger = getattr(request.state, "logger", logging.getLogger("error"))
+        logger.exception("run_stream failed")
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Internal server error",
+                "request_id": request_id,
+            },
+        )
 
     finally:
         db.close()
 
-@app.get("/health")
-async def health():
 
-    return {
-        "status": "healthy"
-    }
+# NOTE: /health and /health/ready are served by src.api.routes.health (included
+# above). The previous inline /health handler was removed to avoid a duplicate.
+
 
 @app.on_event("startup")
 async def startup_event():
 
     print("🚀 Backend starting...")
+
+    # Validate production configuration early (logs a clear, secret-free error
+    # if required config is missing; warns for optional/fallback config).
+    validate_config(raise_on_error=False)
 
     # Create database tables
     Base.metadata.create_all(bind=engine)

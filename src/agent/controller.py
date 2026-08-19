@@ -22,6 +22,14 @@ from src.services.audit_service import (
     update_agent_run
 )
 
+from src.services.agent_run_service import (
+    finalize_agent_run_summary
+)
+
+from src.genai.llm_router import (
+    get_last_llm_meta
+)
+
 
 CONFIDENCE_THRESHOLD = 0.75
 MAX_RETRIES = 2
@@ -34,12 +42,18 @@ class AgentController:
     def __init__(
         self,
         db,
-        session_id="default"
+        session_id="default",
+        user_id=None
     ):
 
         self.db = db
 
         self.session_id = session_id
+
+        # Owning user id (Milestone 6). Passed through to the AgentRun record
+        # for user isolation. This is identity only — no authorization logic
+        # lives in the agent core; that stays at the API/security layer.
+        self.user_id = user_id
 
         self.planner = PlannerAgent()
 
@@ -147,7 +161,9 @@ class AgentController:
 
             verification_result={},
 
-            status="running"
+            status="running",
+
+            user_id=self.user_id
         )
             self.executor.set_agent_run_id(
     run.id
@@ -187,21 +203,23 @@ class AgentController:
                     session_id=self.session_id
                 )
 
-                update_agent_run(
+                finalize_agent_run_summary(
 
                     db=self.db,
 
-                    run_id=run.id,
+                    agent_run_id=run.id,
+
+                    status="approval_required",
 
                     execution_result={},
 
                     verification_result={
-
                         "risk": risk
-
                     },
 
-                    status="approval_required"
+                    plan=plan,
+
+                    llm_meta=get_last_llm_meta()
                 )
 
                 logger.warning(
@@ -359,22 +377,28 @@ class AgentController:
                 # AUDIT TRAIL
                 # ==========================
 
-                update_agent_run(
+                finalize_agent_run_summary(
 
                     db=self.db,
 
-                    run_id=run.id,
+                    agent_run_id=run.id,
+
+                    status="success",
 
                     execution_result=execution_result,
 
                     verification_result=verification,
 
-                    status="success"
+                    plan=plan,
+
+                    llm_meta=get_last_llm_meta()
                 )
 
                 return {
 
                     "status": "success",
+
+                    "run_id": run.id,
 
                     "attempts": attempt + 1,
 
@@ -422,22 +446,28 @@ class AgentController:
 
             pass
 
-        update_agent_run(
+        finalize_agent_run_summary(
 
             db=self.db,
 
-            run_id=run.id,
+            agent_run_id=run.id,
+
+            status="failed",
 
             execution_result=last_result,
 
             verification_result=last_verification,
 
-            status="failed"
+            plan=plan,
+
+            llm_meta=get_last_llm_meta()
         )
 
         return {
 
             "status": "failed",
+
+            "run_id": run.id,
 
             "attempts": attempt,
 

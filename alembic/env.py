@@ -25,7 +25,18 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 from src.db.base import Base
-from src.models import Process, Case, Resource, Task
+import src.models
+import src.db.models  # noqa: F401  register agent_runs / step_executions / etc.
+
+# Prefer the same DATABASE_URL the application uses. Escape '%' so that
+# configparser interpolation (used by get_main_option/get_section) reproduces
+# the original URL verbatim — URL-encoded passwords contain '%' sequences.
+from dotenv import load_dotenv
+
+load_dotenv()
+_env_db_url = os.getenv("DATABASE_URL")
+if _env_db_url:
+    config.set_main_option("sqlalchemy.url", _env_db_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
