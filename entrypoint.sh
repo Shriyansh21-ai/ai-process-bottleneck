@@ -21,6 +21,11 @@ set -euo pipefail
 : "${WEB_CONCURRENCY:=1}"
 : "${DB_WAIT_TIMEOUT:=60}"
 : "${RUN_MIGRATIONS:=1}"
+# Which upstream peers may set X-Forwarded-For/-Proto. Defaults to loopback so
+# clients CANNOT spoof their IP (rate-limit keying + logged IPs stay honest).
+# Set this to your reverse proxy's IP/CIDR when deploying behind one; only use
+# "*" if a trusted proxy is guaranteed to be the sole ingress.
+: "${FORWARDED_ALLOW_IPS:=127.0.0.1}"
 
 # ------------------------------------------------------------------
 # 1. wait for the database
@@ -73,6 +78,6 @@ exec python -m uvicorn main:app \
   --port "${APP_PORT}" \
   --workers "${WEB_CONCURRENCY}" \
   --proxy-headers \
-  --forwarded-allow-ips "*" \
+  --forwarded-allow-ips "${FORWARDED_ALLOW_IPS}" \
   --timeout-keep-alive 30 \
   --timeout-graceful-shutdown 30

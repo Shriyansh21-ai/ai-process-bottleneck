@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from logging.config import dictConfig
 
@@ -39,5 +40,16 @@ LOGGING_CONFIG = {
     }
 }
 
+
+def _resolve_level() -> str:
+    """Log level from the LOG_LEVEL env var (default INFO), validated."""
+    level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        level = "INFO"
+    return level
+
+
 def setup_logging():
-    dictConfig(LOGGING_CONFIG)
+    config = dict(LOGGING_CONFIG)
+    config["root"] = {**LOGGING_CONFIG["root"], "level": _resolve_level()}
+    dictConfig(config)

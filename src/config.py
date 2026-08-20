@@ -63,8 +63,12 @@ def _present(key: str) -> bool:
 
 
 def get_env() -> str:
-    """Return the deployment environment (defaults to ``dev``)."""
-    return os.getenv("ENV", "dev").strip().lower()
+    """Return the deployment environment (defaults to ``dev``).
+
+    Reads ``ENV``; ``ENVIRONMENT`` is accepted as a backward-compatible alias.
+    """
+    value = os.getenv("ENV") or os.getenv("ENVIRONMENT") or "dev"
+    return value.strip().lower()
 
 
 def is_production() -> bool:

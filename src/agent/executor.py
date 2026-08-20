@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from src.utils.logger import (
     setup_logger
@@ -24,6 +25,24 @@ logger = setup_logger()
 MAX_TOOL_RETRIES = 3
 
 RETRY_DELAY_SECONDS = 2
+
+
+def _int_env(name: str, default: int) -> int:
+    """Read a positive int from env, falling back to default on bad input."""
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+# --- Runaway-execution safeguards (env-tunable, additive) -------------------
+# Bound how long a single (async) tool call may run before being cancelled.
+TOOL_TIMEOUT_SECONDS = _int_env("TOOL_TIMEOUT_SECONDS", 60)
+# Cap the total number of steps a single plan may contain.
+MAX_PLAN_STEPS = _int_env("MAX_PLAN_STEPS", 50)
+# Cap how many steps run concurrently in one DAG wave.
+MAX_PARALLEL_STEPS = _int_env("MAX_PARALLEL_STEPS", 8)
 
 
 class ToolExecutor:
@@ -149,7 +168,14 @@ class ToolExecutor:
                     result
                 ):
 
-                    result = await result
+                    # Bound async tool calls (e.g. LLM/HTTP) so a hung provider
+                    # cannot stall the whole run indefinitely. Sync tools return
+                    # directly and are additionally bounded by the run-level
+                    # deadline enforced in the controller.
+                    result = await asyncio.wait_for(
+                        result,
+                        timeout=TOOL_TIMEOUT_SECONDS,
+                    )
 
                 duration = int(
                     (
@@ -168,8 +194,8 @@ class ToolExecutor:
                     and self.agent_run_id
                 ):
 
-                    logger.info(
-                        f"STEP AUDIT DEBUG | agent_run_id={self.agent_run_id}"
+                    logger.debug(
+                        f"step audit | agent_run_id={self.agent_run_id}"
                     )
 
                     try:
@@ -223,7 +249,9 @@ class ToolExecutor:
 
             except Exception as e:
 
-                last_error = str(e)
+                # Some exceptions (e.g. asyncio.TimeoutError) stringify to "";
+                # keep a meaningful, non-empty error message.
+                last_error = str(e) or type(e).__name__
 
                 logger.warning(
 
@@ -284,8 +312,8 @@ class ToolExecutor:
             and self.agent_run_id
         ):
 
-            logger.info(
-                f"STEP AUDIT DEBUG | agent_run_id={self.agent_run_id}"
+            logger.debug(
+                f"step audit | agent_run_id={self.agent_run_id}"
             )
 
             try:
@@ -344,7 +372,31 @@ class ToolExecutor:
             []
         )
 
+        # ==========================================
+        # RUNAWAY-PLAN GUARD
+        # ==========================================
+        # Reject oversized plans (e.g. a malformed/LLM-authored plan with an
+        # enormous step count) before we start executing anything.
+        if len(steps) > MAX_PLAN_STEPS:
+
+            raise ValueError(
+                f"Plan exceeds maximum of {MAX_PLAN_STEPS} steps "
+                f"(got {len(steps)})"
+            )
+
         completed_results = {}
+
+        # Track steps that ultimately failed so their dependents are SKIPPED
+        # rather than executed on error data (which would produce plausible but
+        # garbage downstream conclusions).
+        failed_ids = set()
+
+        # Bound how many steps run at once within a wave.
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_STEPS)
+
+        async def _run_guarded(step, ctx):
+            async with semaphore:
+                return await self.execute_step(step, ctx)
 
         pending_steps = steps.copy()
 
@@ -379,27 +431,64 @@ class ToolExecutor:
                     "Circular dependency detected in execution graph"
                 )
 
+            # ==========================================
+            # SKIP STEPS WHOSE DEPENDENCIES FAILED
+            # ==========================================
+            # A step is only safe to execute if none of its dependencies
+            # errored/were skipped. Otherwise record a "skipped" result so its
+            # own dependents also skip — no deadlock, no execution on bad data.
+            runnable_steps = []
+
+            for step in ready_steps:
+
+                broken_dep = next(
+                    (
+                        dep for dep in step.get("depends_on", [])
+                        if dep in failed_ids
+                    ),
+                    None,
+                )
+
+                if broken_dep is not None:
+
+                    logger.warning(
+                        f"Skipping step {step['step_id']} | "
+                        f"upstream dependency failed: {broken_dep}"
+                    )
+
+                    completed_results[step["step_id"]] = {
+                        "step_id": step["step_id"],
+                        "tool": step.get("tool"),
+                        "skipped": True,
+                        "error": f"skipped: upstream dependency {broken_dep} failed",
+                    }
+                    failed_ids.add(step["step_id"])
+
+                else:
+
+                    runnable_steps.append(step)
+
             logger.info(
-                f"Executing {len(ready_steps)} parallel step(s)"
+                f"Executing {len(runnable_steps)} parallel step(s)"
             )
 
             # ==========================================
-            # EXECUTE READY STEPS
+            # EXECUTE READY STEPS (bounded concurrency)
             # ==========================================
 
             tasks = [
 
-                self.execute_step(
+                _run_guarded(
                     step,
                     completed_results
                 )
 
-                for step in ready_steps
+                for step in runnable_steps
             ]
 
             results = await asyncio.gather(
                 *tasks
-            )
+            ) if tasks else []
 
             # ==========================================
             # STORE RESULTS
@@ -410,6 +499,13 @@ class ToolExecutor:
                 completed_results[
                     result["step_id"]
                 ] = result
+
+                # A step is "failed" iff it returned an error payload. Use key
+                # presence (not truthiness) so an empty error string still
+                # counts as a failure and correctly blocks dependents.
+                if "error" in result:
+
+                    failed_ids.add(result["step_id"])
 
             # ==========================================
             # REMOVE COMPLETED

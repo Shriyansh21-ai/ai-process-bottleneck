@@ -10,6 +10,7 @@ from sqlalchemy import (
 )
 
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 
 from src.db.base import Base
 
@@ -139,4 +140,20 @@ class AgentRun(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         index=True
+    )
+
+    # Audit children. cascade="all, delete-orphan" makes deleting a run also
+    # remove its step/task rows in the ORM layer — so delete_run() works on
+    # both PostgreSQL (FK RESTRICT by default) and SQLite (FK enforcement off
+    # in tests) without relying on a DB-level ON DELETE CASCADE.
+    step_executions = relationship(
+        "StepExecution",
+        cascade="all, delete-orphan",
+        passive_deletes=False,
+    )
+
+    agent_tasks = relationship(
+        "AgentTask",
+        cascade="all, delete-orphan",
+        passive_deletes=False,
     )

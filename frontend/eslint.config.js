@@ -23,7 +23,20 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // Ignore PascalCase/underscore for both vars and args: component-type
+      // params (e.g. `icon: Icon`) are used only in JSX, which this config's
+      // rule set does not track as usage.
+      'no-unused-vars': [
+        'error',
+        { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^[A-Z_]|^_' },
+      ],
+    },
+  },
+  {
+    // Test files run under Vitest/jsdom with Node globals available.
+    files: ['**/*.{test,spec}.{js,jsx}', 'src/test/**'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
     },
   },
 ])

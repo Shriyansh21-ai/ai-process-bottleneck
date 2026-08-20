@@ -201,6 +201,65 @@ class AgentRunDetail(BaseModel):
 
 
 # ------------------------------------------------------------------
+# Execution step (per-step timeline — used by /runs/{id}/steps)
+# ------------------------------------------------------------------
+
+# Payload summaries are truncated so the timeline endpoint never streams huge
+# raw tool input/output blobs to the dashboard (matches the summary/detail
+# split used elsewhere in this module).
+_STEP_PAYLOAD_MAX = 600
+
+
+def _truncate(value: Any, limit: int = _STEP_PAYLOAD_MAX) -> Optional[str]:
+    """Return a short, display-safe summary of a stored step payload."""
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    text = text.strip()
+    if not text:
+        return None
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
+class AgentRunStep(BaseModel):
+    """One recorded execution step (from the step_executions audit table)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    step_id: Optional[int] = Field(None, description="Ordinal within the run")
+    tool_name: Optional[str] = None
+    status: Optional[str] = None
+    execution_time_ms: Optional[int] = None
+    retry_count: Optional[int] = None
+    input_summary: Optional[str] = Field(
+        None, description="Truncated tool input payload"
+    )
+    output_summary: Optional[str] = Field(
+        None, description="Truncated tool output payload"
+    )
+    error: Optional[str] = Field(None, description="Failure reason, if any")
+    created_at: Optional[datetime] = None
+
+    @classmethod
+    def from_step(cls, step: Any) -> "AgentRunStep":
+        return cls(
+            id=step.id,
+            step_id=getattr(step, "step_id", None),
+            tool_name=getattr(step, "tool_name", None),
+            status=getattr(step, "status", None),
+            execution_time_ms=getattr(step, "execution_time_ms", None),
+            retry_count=getattr(step, "retry_count", None),
+            input_summary=_truncate(getattr(step, "input_payload", None)),
+            output_summary=_truncate(getattr(step, "output_payload", None)),
+            error=_truncate(getattr(step, "error", None)),
+            created_at=getattr(step, "created_at", None),
+        )
+
+
+# ------------------------------------------------------------------
 # Statistics
 # ------------------------------------------------------------------
 

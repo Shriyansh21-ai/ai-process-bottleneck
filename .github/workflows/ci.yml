@@ -54,6 +54,50 @@ jobs:
         # neither PostgreSQL nor OpenAI/Ollama are needed here.
         run: python -m pytest -ra
 
+      - name: Python dependency audit (advisory)
+        # Advisory only: some transitive advisories (e.g. torch) have no
+        # practical fix yet. Runtime-facing packages are bumped in
+        # requirements.txt; this surfaces new issues without blocking CI.
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --progress-spinner off
+
+  # ---------------------------------------------------------------
+  # 1b. Frontend: lint, unit tests, production build
+  # ---------------------------------------------------------------
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Production build
+        run: npm run build
+
+      - name: npm audit (advisory)
+        continue-on-error: true
+        run: npm audit
+
   # ---------------------------------------------------------------
   # 2. Alembic migration validation against a real PostgreSQL
   # ---------------------------------------------------------------

@@ -38,3 +38,14 @@ ollama/
 # Build
 dist/
 build/
+
+# Vector store (Qdrant embedded) — runtime data, never commit
+qdrant_data/
+
+# Runtime logs directory
+logs/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

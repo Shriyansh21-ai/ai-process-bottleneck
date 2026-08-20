@@ -140,14 +140,22 @@ def generate_response(
 
     _record_llm_meta(None, "offline")
 
+    # Fail CLOSED and mark the payload itself as degraded. This function is the
+    # single entry used by BOTH the planner and the verifier, so an offline
+    # fallback must never masquerade as a real, approved verdict. The planner
+    # still detects this (it sniffs for the "confidence" key and repairs to a
+    # safe static plan); the verifier now correctly treats it as not-approved.
+    # `degraded=True` lets any downstream consumer branch on the degraded state.
     return json.dumps({
 
-        "confidence": 0.60,
+        "degraded": True,
 
-        "approved": True,
+        "confidence": 0.0,
+
+        "approved": False,
 
         "issues": [
 
-            "System operating in fallback mode"
+            "System operating in offline fallback mode — output is not verified"
         ]
     })

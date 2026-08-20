@@ -62,6 +62,24 @@ services:
     mem_limit: 4g
     cpus: 2.0
 
+  # Static dashboard SPA served by nginx. Additive — the backend `app` service
+  # is unchanged. The browser reaches the API at the host-exposed backend port,
+  # so VITE_API_URL is baked as http://localhost:8000 at build time.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: "http://localhost:8000"
+    container_name: ai_frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "5173:80"
+    mem_limit: 256m
+    cpus: 0.5
+
 volumes:
   postgres_data:
   qdrant_data:

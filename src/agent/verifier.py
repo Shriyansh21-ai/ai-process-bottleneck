@@ -50,11 +50,17 @@ EXECUTION RESULT:
 
         except json.JSONDecodeError:
 
+            # Fail CLOSED: if the verifier's own output cannot be parsed we
+            # cannot vouch for the result. Returning approved=True here would
+            # silently disable the safety gate exactly when it is unusable, so
+            # we mark the result unverified/not-approved instead.
             return {
 
-                "confidence": 0.80,
+                "confidence": 0.0,
 
-                "issues": [],
+                "issues": [
+                    "verifier output unparseable — result could not be verified"
+                ],
 
-                "approved": True
+                "approved": False
             }

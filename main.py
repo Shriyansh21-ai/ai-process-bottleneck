@@ -15,7 +15,7 @@ load_dotenv(BASE_DIR / ".env")
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -27,6 +27,7 @@ from src.api.routes.analysis import router as analysis_router
 from src.core.logging import setup_logging
 from src.core.middleware.request_id import RequestIDMiddleware
 from src.core.middleware.timing import TimingMiddleware
+from src.core.middleware.body_size import BodySizeLimitMiddleware
 from src.core.exceptions import (
     global_exception_handler,
     validation_exception_handler,
@@ -36,6 +37,7 @@ from src.config import (
     get_cors_origins,
     cors_allow_credentials,
     get_run_rate_limit,
+    is_production,
 )
 from src.core.auth import get_current_active_user
 from src.db.models.user import User
@@ -113,24 +115,34 @@ Base.metadata.create_all(bind=engine)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Auth dependency applied at router-inclusion time. These LLM/RAG/ingest/agent
+# endpoints drive paid model calls, embeddings and file ingestion; leaving them
+# open is a cost/resource-exhaustion (DoS) and data-exposure risk. The frontend
+# dashboard uses none of them, so requiring a valid access token is a safe,
+# backward-compatible hardening. /health and /auth stay public by design;
+# /runs and /observability already enforce their own (owner/admin) auth.
+_auth = [Depends(get_current_active_user)]
+
 # Auth endpoints live at /auth/* (register, login, me).
 app.include_router(auth_router)
-app.include_router(analysis_router, prefix="/api")
+app.include_router(analysis_router, prefix="/api", dependencies=_auth)
 
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(TimingMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.include_router(health_router)
-app.include_router(generate_router)
-app.include_router(embeddings_router)
-app.include_router(documents_router)
-app.include_router(search_router)
-app.include_router(rag_router)
-app.include_router(ingest_router)
-app.include_router(chat_router, prefix="/chat", tags=["Chat"])
-app.include_router(stream_chat_router)
+app.include_router(generate_router, dependencies=_auth)
+app.include_router(embeddings_router, dependencies=_auth)
+app.include_router(documents_router, dependencies=_auth)
+app.include_router(search_router, dependencies=_auth)
+app.include_router(rag_router, dependencies=_auth)
+app.include_router(ingest_router, dependencies=_auth)
+app.include_router(chat_router, prefix="/chat", tags=["Chat"], dependencies=_auth)
+app.include_router(stream_chat_router, dependencies=_auth)
 app.include_router(
-    approval_router
+    approval_router,
+    dependencies=_auth,
 )
 app.include_router(
     agent_runs_router
@@ -143,11 +155,13 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 
 # Routes
-app.include_router(agent_router, prefix="/api")
+app.include_router(agent_router, prefix="/api", dependencies=_auth)
 
 class QueryRequest(BaseModel):
-    query: str
-    session_id: str
+    # Bound the prompt so a single request cannot drive unbounded LLM token
+    # cost / memory. 8k chars is generous for an agent task description.
+    query: str = Field(..., min_length=1, max_length=8000)
+    session_id: str = Field(..., min_length=1, max_length=200)
 
 @app.post("/run")
 @limiter.limit(get_run_rate_limit())
@@ -157,9 +171,14 @@ async def run_query(
     current_user: User = Depends(get_current_active_user),
 ):
     db = SessionLocal()
+    logger = getattr(request.state, "logger", logging.getLogger("run"))
     try:
-        print(f" Incoming Query: {req.query}")
-        print(f" Session ID: {req.session_id}")
+        # Do NOT log full query/result bodies at INFO — they can contain PII /
+        # sensitive content. Metadata only at INFO; full body at DEBUG.
+        logger.info(
+            "run_query received",
+            extra={"session_id": req.session_id, "query_len": len(req.query)},
+        )
 
         # The authenticated user owns this run. Identity is injected at the API
         # boundary; the agent execution flow itself is unchanged.
@@ -173,7 +192,7 @@ async def run_query(
             user_query=req.query
         )
 
-        print(f" Result: {result}")
+        logger.debug("run_query completed", extra={"session_id": req.session_id})
 
         # ✅ Ensure response is JSON serializable
         safe_result = result
@@ -277,21 +296,26 @@ async def run_stream(
 @app.on_event("startup")
 async def startup_event():
 
-    print("🚀 Backend starting...")
+    logger = logging.getLogger("startup")
+    logger.info("Backend starting")
 
-    # Validate production configuration early (logs a clear, secret-free error
-    # if required config is missing; warns for optional/fallback config).
-    validate_config(raise_on_error=False)
+    # Validate configuration early. In production a missing required key
+    # (DATABASE_URL / JWT_SECRET_KEY) must HARD-FAIL startup so a misconfigured
+    # instance never comes up "healthy" and serves broken/unauthenticated
+    # traffic. In dev/staging we only warn so local iteration stays easy.
+    validate_config(raise_on_error=is_production())
 
-    # Create database tables
+    # Create database tables. NOTE: production schema is managed by Alembic
+    # (entrypoint runs `alembic upgrade head`); this create_all is a dev/test
+    # convenience and a safety net.
     Base.metadata.create_all(bind=engine)
 
-    print("✅ Database connected")
+    logger.info("Database connected")
 
     # Preload embedding model
     get_embedding_model()
 
-    print("✅ Embedding model loaded")
+    logger.info("Embedding model loaded")
 
     # Verify Ollama connection
     ollama = OllamaClient()
@@ -301,13 +325,13 @@ async def startup_event():
         response = await ollama.generate("Hello")
 
         if response:
-            print("✅ Ollama connected")
+            logger.info("Ollama connected")
 
         else:
-            print("❌ Ollama not responding")
+            logger.warning("Ollama not responding")
 
     except Exception as e:
 
-        print(f"❌ Ollama connection failed: {e}")
+        logger.warning("Ollama connection failed: %s", e)
 
-    print("🚀 Backend ready")
+    logger.info("Backend ready")

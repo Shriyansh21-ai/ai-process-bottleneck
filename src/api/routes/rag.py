@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.db.session import get_db
@@ -21,7 +21,9 @@ router = APIRouter(
 
 @router.post("/")
 async def rag_query(
-    query: str,
+    # Bound the query length — this drives retrieval + an LLM generation, so an
+    # unbounded prompt is a cost/resource-abuse vector.
+    query: str = Query(..., min_length=1, max_length=4000),
     db: Session = Depends(get_db)
 ):
 

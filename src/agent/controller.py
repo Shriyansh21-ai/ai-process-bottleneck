@@ -1,3 +1,6 @@
+import asyncio
+import os
+
 from src.agent.planner import PlannerAgent
 from src.agent.executor import ToolExecutor
 from src.agent.verifier import VerifierAgent
@@ -33,6 +36,15 @@ from src.genai.llm_router import (
 
 CONFIDENCE_THRESHOLD = 0.75
 MAX_RETRIES = 2
+
+
+def _execution_timeout() -> int:
+    """Wall-clock bound (seconds) for a single plan-execution phase."""
+    try:
+        value = int(os.getenv("EXECUTION_TIMEOUT_SECONDS", "300"))
+        return value if value > 0 else 300
+    except (TypeError, ValueError):
+        return 300
 
 logger = setup_logger()
 
@@ -243,8 +255,11 @@ class AgentController:
 
             try:
 
-                execution_result = await self.executor.execute_plan(
-                    plan
+                # Bound the whole execution phase so a stuck plan cannot run
+                # forever (per-tool timeouts also apply inside the executor).
+                execution_result = await asyncio.wait_for(
+                    self.executor.execute_plan(plan),
+                    timeout=_execution_timeout(),
                 )
 
             except Exception as e:
@@ -252,6 +267,21 @@ class AgentController:
                 logger.error(
                     f"Execution failed: {str(e)}"
                 )
+
+                # Persist the failed state instead of leaving the run orphaned
+                # in "running".
+                try:
+                    finalize_agent_run_summary(
+                        db=self.db,
+                        agent_run_id=run.id,
+                        status="failed",
+                        execution_result={},
+                        verification_result={"issues": [str(e)]},
+                        plan=plan,
+                        llm_meta=get_last_llm_meta(),
+                    )
+                except Exception:
+                    logger.warning("Failed to finalize errored run")
 
                 return {
 
@@ -312,6 +342,24 @@ class AgentController:
             last_verification = verification
 
             # ==========================================
+            # STATUS CONSISTENCY GUARD
+            # ==========================================
+            # A run must not be reported as a successful/approved execution when
+            # one or more steps actually failed or were skipped. Without this,
+            # an over-eager (or degraded) verifier verdict could mark a run
+            # "success" while the audit trail shows failed steps — an impossible
+            # state. A failed step is one whose result carries an "error" key.
+            step_results = (execution_result or {}).get("results", {}) or {}
+            execution_had_failure = any(
+                isinstance(v, dict) and "error" in v
+                for v in step_results.values()
+            )
+            if execution_had_failure:
+                logger.warning(
+                    "Execution had failed/skipped steps; not eligible for success"
+                )
+
+            # ==========================================
             # STEP 5: SUCCESS
             # ==========================================
 
@@ -325,6 +373,10 @@ class AgentController:
                 and
 
                 confidence >= CONFIDENCE_THRESHOLD
+
+                and
+
+                not execution_had_failure
             ):
 
                 logger.info(
@@ -414,6 +466,21 @@ class AgentController:
 
                 "Low confidence detected, generating adaptive replan"
             )
+
+            # Finalize this superseded attempt so it is not left orphaned in
+            # "running" state; the next attempt creates its own AgentRun row.
+            try:
+                finalize_agent_run_summary(
+                    db=self.db,
+                    agent_run_id=run.id,
+                    status="failed",
+                    execution_result=execution_result,
+                    verification_result=verification,
+                    plan=plan,
+                    llm_meta=get_last_llm_meta(),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to finalize superseded run: {e}")
 
             attempt += 1
 

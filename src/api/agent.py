@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 
 from src.db.session import SessionLocal
@@ -105,6 +105,11 @@ def run_stream(
 ):
     user_query = query.get("query")
 
+    if not isinstance(user_query, str) or not user_query.strip():
+        raise HTTPException(status_code=422, detail="'query' is required")
+    if len(user_query) > 8000:
+        raise HTTPException(status_code=422, detail="'query' is too long")
+
     # ✅ Use NEW function
     response_text = run_agent_sync(user_query, db)
 
@@ -121,7 +126,12 @@ def run_stream(
 @router.post("/chat")
 async def chat(query: dict):
 
-    user_message = query["message"]
+    user_message = query.get("message")
+
+    if not isinstance(user_message, str) or not user_message.strip():
+        raise HTTPException(status_code=422, detail="'message' is required")
+    if len(user_message) > 8000:
+        raise HTTPException(status_code=422, detail="'message' is too long")
 
     response = await generate_response(user_message)
 

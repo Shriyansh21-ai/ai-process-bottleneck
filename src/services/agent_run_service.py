@@ -270,6 +270,26 @@ def get_run_by_id(
 
 
 # ==========================================
+# GET STEPS FOR A RUN
+# ==========================================
+
+def get_steps_for_run(db, agent_run_id):
+    """
+    Return the recorded ``StepExecution`` rows for a run, oldest step first.
+
+    Read-only; ordering is by the executor's ``step_id`` (then insertion id)
+    so the dashboard can render a stable execution timeline. Ownership is
+    enforced by the caller before this is invoked.
+    """
+    return (
+        db.query(StepExecution)
+        .filter(StepExecution.agent_run_id == agent_run_id)
+        .order_by(StepExecution.step_id.asc(), StepExecution.id.asc())
+        .all()
+    )
+
+
+# ==========================================
 # GET SESSION
 # ==========================================
 

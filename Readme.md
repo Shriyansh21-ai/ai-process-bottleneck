@@ -808,6 +808,75 @@ destroyed and no `NOT NULL` column is added to a populated table.
 
 ---
 
+# Architecture Overview
+
+End-to-end request flow for an agent task:
+
+```
+        User (browser SPA / API client)
+                     │  HTTPS + JWT (Authorization: Bearer)
+                     ▼
+        FastAPI  (main:app)
+          middleware: RequestID → Timing → BodySizeLimit → CORS
+          auth: OAuth2/JWT (get_current_active_user), rate limiting (slowapi)
+                     │
+                     ▼
+        AgentController               ← per-request, owns user_id + session_id
+                     │
+        ┌────────────┼───────────────┬───────────────┐
+        ▼            ▼               ▼               ▼
+    PlannerAgent  RiskEvaluator   ToolExecutor    VerifierAgent
+    (LLM plan)    (approval gate) (DAG engine)    (LLM verify, fails closed)
+                                     │
+                     ┌───────────────┼───────────────┐
+                     ▼               ▼               ▼
+                 ToolRegistry     RAG retrieval   Memory system
+                 (allowlisted)    (Qdrant)        (session-scoped)
+                     │
+                     ▼
+        Persistence  (PostgreSQL via SQLAlchemy)
+          agent_runs · step_executions · users · approvals · audit_logs
+                     │
+                     ▼
+        Dashboard  (React/Vite SPA: runs, steps, analytics, health)
+```
+
+Safety properties enforced across the flow:
+
+- **AuthN/AuthZ** at the API boundary; every run/step/analytics read is
+  **owner-scoped** server-side (cross-user access → 404, no existence leak).
+- **Agent execution** is bounded: tool allowlisting, per-tool timeout, bounded
+  concurrency, max-step cap, bounded retries, and failed-dependency steps are
+  **skipped** rather than run on error data.
+- **Degraded LLM/RAG** never masquerades as a confident result — the verifier
+  and the offline fallback both **fail closed**.
+
+---
+
+# Production Hardening (Milestone 8)
+
+Key production-readiness controls (all env-driven — see `.env.example`):
+
+| Area | Control |
+| --- | --- |
+| Secrets | No secrets tracked; git history cleaned; `.env` gitignored; `.env.example` placeholders only |
+| Config | Production startup **hard-fails** without required config (`JWT_SECRET_KEY`, `DATABASE_URL`) |
+| Auth | LLM/RAG/ingest/agent/approval endpoints require a valid token; owner-scoped reads |
+| Limits | Global request body-size cap; bounded query/search lengths; server-side pagination caps |
+| Agent safety | `TOOL_TIMEOUT_SECONDS`, `EXECUTION_TIMEOUT_SECONDS`, `MAX_PLAN_STEPS`, `MAX_PARALLEL_STEPS` |
+| Database | Connection-pool tuning + PostgreSQL `statement_timeout`; cascade delete of run children |
+| Proxy | `FORWARDED_ALLOW_IPS` defaults to loopback (no client IP spoofing) |
+| Logging | `LOG_LEVEL` env-driven; no PII/secret bodies logged at INFO |
+| CI | Backend tests, **frontend lint/test/build**, migration up/down/up, Docker smoke, dependency audits |
+
+**Backup & recovery:** see [`docs/BACKUP_RECOVERY.md`](docs/BACKUP_RECOVERY.md).
+
+**Known limitation:** `alembic downgrade base` has a SQLite-only issue (dropping
+a FK column); the forward path (`alembic upgrade head`, the production path)
+works on both SQLite and PostgreSQL and is validated in CI.
+
+---
+
 # Final Notes
 
 This project demonstrates:

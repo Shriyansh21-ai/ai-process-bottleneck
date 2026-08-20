@@ -18,15 +18,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.core.auth import get_current_active_user
 from src.db.models.user import User
 from src.db.session import get_db
+from typing import List
+
 from src.schemas.agent_run import (
     AgentRunDetail,
     AgentRunStatistics,
+    AgentRunStep,
     PaginatedAgentRuns,
 )
 from src.services.agent_run_service import (
     ALLOWED_STATUSES,
     get_run_by_id,
     get_run_statistics,
+    get_steps_for_run,
     list_runs,
 )
 
@@ -189,7 +193,7 @@ def statistics(
     ),
 )
 def search_runs(
-    q: str = Query(..., min_length=1, description="Search term"),
+    q: str = Query(..., min_length=1, max_length=200, description="Search term"),
     db=Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     page: int = Query(1, ge=1),
@@ -277,6 +281,46 @@ def status_runs(
         page_size=page_size,
         status=run_status,
     )
+
+
+# ------------------------------------------------------------------
+# EXECUTION STEPS (per-run timeline)
+# ------------------------------------------------------------------
+
+@router.get(
+    "/{run_id}/steps",
+    response_model=List[AgentRunStep],
+    summary="List execution steps for a run",
+    description=(
+        "Return the recorded execution steps for a single run, oldest first, "
+        "for the step-execution timeline. Tool input/output payloads are "
+        "truncated to short summaries. Owner-scoped: a run owned by another "
+        "user returns 404."
+    ),
+    responses={404: {"description": "Run not found"}},
+)
+def run_steps(
+    run_id: int,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        # Enforce ownership on the parent run first — an unauthorized run is
+        # indistinguishable from a missing one (no IDOR, no step leak).
+        run = get_run_by_id(db, run_id, user_id=_owner_scope(current_user))
+        if not run:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail=f"Run {run_id} not found",
+            )
+        steps = get_steps_for_run(db, run_id)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="A database error occurred while retrieving run steps.",
+        )
+
+    return [AgentRunStep.from_step(s) for s in steps]
 
 
 # ------------------------------------------------------------------

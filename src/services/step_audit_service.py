@@ -1,8 +1,11 @@
 import json
+import logging
 
 from src.db.models.step_execution import (
     StepExecution
 )
+
+logger = logging.getLogger("step_audit")
 
 
 def create_step_log(
@@ -57,16 +60,12 @@ def create_step_log(
 
         db.refresh(row)
 
-        print(
-            f"STEP LOG SAVED -> {row.id}"
-        )
+        logger.debug("step log saved id=%s", row.id)
 
         return row
 
     except Exception as e:
 
-        print(
-            f"STEP LOG ERROR -> {str(e)}"
-        )
+        logger.error("step log error: %s", str(e))
 
         raise
