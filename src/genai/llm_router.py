@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 try:
 
     import ollama
@@ -9,6 +10,24 @@ except ImportError:
     ollama = None
 
 from openai import OpenAI
+
+
+logger = logging.getLogger("llm_router")
+
+
+def _llm_timeout() -> float:
+    """Per-call wall-clock bound (seconds) for a remote LLM request.
+
+    Without an explicit timeout a hung/slow provider stalls the whole /run
+    request: the planner and verifier LLM calls happen OUTSIDE the controller's
+    execution-phase ``asyncio.wait_for`` bound, so this is the only guard on
+    them. Configurable via ``LLM_TIMEOUT_SECONDS`` (default 60).
+    """
+    try:
+        value = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+        return value if value > 0 else 60.0
+    except (TypeError, ValueError):
+        return 60.0
 
 
 # ==========================================
@@ -77,6 +96,8 @@ def generate_response(
 
                 temperature=0,
 
+                timeout=_llm_timeout(),
+
                 messages=[
 
                     {
@@ -86,7 +107,7 @@ def generate_response(
                 ]
             )
 
-            print("✅ Using OpenAI")
+            logger.info("LLM tier=openai model=%s", model)
 
             _record_llm_meta(model, "openai")
 
@@ -94,9 +115,9 @@ def generate_response(
 
         except Exception as e:
 
-            print(
-                f"⚠️ OpenAI failed: {str(e)}"
-            )
+            # Never log the exception at a level that could echo request content;
+            # the message (provider/network error) is safe and key-free.
+            logger.warning("OpenAI tier failed, falling back: %s", str(e))
 
     # ==========================================
     # TIER 2 — OLLAMA
@@ -106,20 +127,18 @@ def generate_response(
 
         try:
 
-            response = ollama.chat(
+            # Bound the Ollama call so a hung local server cannot stall /run.
+            # ollama.Client forwards timeout to its underlying httpx client; if
+            # this build's signature differs we fall back to the module-level
+            # chat (never worse than the previous unbounded behavior).
+            messages = [{"role": "user", "content": prompt}]
+            try:
+                client = ollama.Client(timeout=_llm_timeout())
+                response = client.chat(model="llama3", messages=messages)
+            except TypeError:
+                response = ollama.chat(model="llama3", messages=messages)
 
-                model="llama3",
-
-                messages=[
-
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
-
-            print("✅ Using Ollama")
+            logger.info("LLM tier=ollama model=llama3")
 
             _record_llm_meta("llama3", "ollama")
 
@@ -127,16 +146,12 @@ def generate_response(
 
         except Exception as e:
 
-            print(
-                f"⚠️ Ollama failed: {str(e)}"
-            )
+            logger.warning("Ollama tier failed, falling back: %s", str(e))
     # ==========================================
     # TIER 3 — OFFLINE SAFE FALLBACK
     # ==========================================
 
-    print(
-        "⚠️ Falling back to offline mode"
-    )
+    logger.warning("All LLM tiers unavailable — using offline safe fallback")
 
     _record_llm_meta(None, "offline")
 

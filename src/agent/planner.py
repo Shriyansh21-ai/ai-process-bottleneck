@@ -76,9 +76,17 @@ class PlannerAgent:
 
         for name, meta in tools.items():
 
-            lines.append(
-                f"{name} → {meta['description']}"
-            )
+            line = f"{name} → {meta['description']}"
+
+            required = meta.get("required_inputs")
+
+            if required:
+                # Make the mandatory input keys explicit so the planner emits
+                # them (conforming to the actual tool contract) instead of
+                # defaulting every step to {"query": ...}.
+                line += f" [REQUIRED input keys: {', '.join(required)}]"
+
+            lines.append(line)
 
         return "\n".join(lines)
 

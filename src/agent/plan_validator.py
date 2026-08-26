@@ -72,8 +72,62 @@ class PlanValidator:
                         f"Unknown dependency: {dep}"
                     )
 
+        # Validate that each step supplies the input keys its tool requires.
+        self.validate_inputs(plan)
+
         # Check circular dependencies
         self.detect_cycles(plan)
+
+        return True
+
+    def validate_inputs(
+        self,
+        plan: dict
+    ):
+        """Reject a plan whose step omits an input key its tool requires.
+
+        This catches the mismatch class where the planner selects a tool (e.g.
+        ``sql_query``) but omits a mandatory input (``table``) that would make
+        the tool raise mid-execution. Rejecting here lets the planner repair to
+        a safe plan instead of producing a failed run. Tools that degrade
+        gracefully on missing input declare no ``required_inputs`` and are never
+        rejected. Executor-injected keys (``db``) are intentionally not part of
+        any tool's ``required_inputs``.
+        """
+
+        for step in plan.get("steps", []):
+
+            meta = ToolRegistry.get_tool(step.get("tool"))
+
+            if not meta:
+                # Unknown tools are already rejected by validate(); nothing to do.
+                continue
+
+            required = meta.get("required_inputs", [])
+
+            if not required:
+                continue
+
+            step_input = step.get("input", {})
+
+            if not isinstance(step_input, dict):
+
+                raise ValueError(
+                    f"Step {step.get('step_id')} tool '{step.get('tool')}' "
+                    f"input must be an object"
+                )
+
+            missing = [
+                key for key in required
+                if step_input.get(key) in (None, "")
+            ]
+
+            if missing:
+
+                raise ValueError(
+                    f"Step {step.get('step_id')} tool '{step.get('tool')}' "
+                    f"missing required input(s): {', '.join(missing)}"
+                )
 
         return True
 

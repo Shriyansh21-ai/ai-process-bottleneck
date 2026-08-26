@@ -25,5 +25,5 @@ def get_job_status(job_id: int, db: Session = Depends(get_db)):
         "status": job.status,
         "result": job.result,
         "error": job.error,
-        "metadata": job.metadata,
+        "metadata": job.job_metadata,
     }

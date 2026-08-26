@@ -11,14 +11,23 @@ class ToolRegistry:
 
         function,
 
-        description: str
+        description: str,
+
+        required_inputs=None
     ):
 
+        # ``required_inputs`` (additive, backward-compatible) lists the input
+        # keys a tool MUST receive from the planner or it will crash at runtime.
+        # It excludes keys the executor injects (e.g. ``db``). Tools that degrade
+        # gracefully on missing input declare nothing here. PlanValidator uses it
+        # to reject a plan before execution instead of failing mid-run.
         cls._tools[name] = {
 
             "function": function,
 
-            "description": description
+            "description": description,
+
+            "required_inputs": list(required_inputs or []),
         }
 
     @classmethod

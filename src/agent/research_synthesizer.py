@@ -3,7 +3,20 @@ import json
 from openai import OpenAI
 
 
-client = OpenAI()
+# The OpenAI client is built LAZILY (not at import time). Constructing OpenAI()
+# eagerly raises OpenAIError when OPENAI_API_KEY is unset, and this module sits
+# in the ToolExecutor import chain (register_tools -> web_search_tool -> here).
+# An eager client therefore crashed the entire agent pipeline import on any
+# deployment without an OpenAI key — even though the key is documented as
+# OPTIONAL (see src/config.py). Deferring construction keeps the import safe.
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = OpenAI()
+    return _client
 
 
 SYSTEM_PROMPT = """
@@ -32,7 +45,7 @@ class ResearchSynthesizer:
         search_results: list
     ):
 
-        response = client.chat.completions.create(
+        response = _get_client().chat.completions.create(
 
             model="gpt-4o-mini",
 
