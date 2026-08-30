@@ -35,7 +35,7 @@ USER QUERY:
 {user_query}
 
 EXECUTION RESULT:
-{json.dumps(execution_result)}
+{json.dumps(execution_result, default=str)}
 """
 
         result_text = generate_response(

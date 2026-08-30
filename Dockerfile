@@ -14,6 +14,11 @@ FROM python:3.13-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    # Force UTF-8 for stdout/stderr regardless of the base image's locale, so
+    # startup/logging that emits non-ASCII (e.g. status glyphs) can never crash
+    # the process on a C/POSIX-locale container. Does not affect app logic.
+    PYTHONUTF8=1 \
+    PYTHONIOENCODING=UTF-8 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     # Keep the HuggingFace model cache inside the app dir (writable by appuser).

@@ -355,7 +355,12 @@ class ToolExecutor:
 
             "error": last_error,
 
-            "retry_count": MAX_TOOL_RETRIES
+            # Number of retries actually performed (== the value recorded in the
+            # step_executions audit row above, and consistent with the success
+            # path which returns ``attempt``). Previously this returned
+            # MAX_TOOL_RETRIES (total attempts), which over-reported retries by
+            # one and disagreed with the audit row that summarises it.
+            "retry_count": attempt
         }
 
     # ==========================================
