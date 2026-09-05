@@ -1,0 +1,29 @@
+# ============================================================
+# OPTIONAL OCR / document-intelligence extras (MRPL Phase 2)
+# ============================================================
+# These enable the SCANNED-PDF / IMAGE extraction path in
+# src/documents. They are OPTIONAL: the core app and the text-PDF
+# path run without them. When absent, the pipeline raises a clear,
+# actionable OCRUnavailableError instead of silently returning empty text.
+#
+# Install (in addition to requirements.txt):
+#     pip install -r requirements-ocr.txt
+#
+# ------------------------------------------------------------
+# SYSTEM DEPENDENCIES (installed via the OS, not pip)
+# ------------------------------------------------------------
+#   * Tesseract OCR engine   — required by pytesseract
+#       Debian/Ubuntu : apt-get install tesseract-ocr
+#       macOS         : brew install tesseract
+#       Windows       : install the Tesseract build and add it to PATH
+#   * Poppler utilities      — required by pdf2image to rasterize PDF pages
+#       Debian/Ubuntu : apt-get install poppler-utils
+#       macOS         : brew install poppler
+#       Windows       : install poppler and add its bin/ to PATH
+#
+# ------------------------------------------------------------
+# PYTHON PACKAGES
+# ------------------------------------------------------------
+pytesseract==0.3.13     # thin wrapper around the local Tesseract binary
+pdf2image==1.17.0       # renders PDF pages to images (needs poppler)
+Pillow>=10.0.0          # image handling (usually already present via torch)

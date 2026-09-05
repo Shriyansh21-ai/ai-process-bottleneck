@@ -61,6 +61,9 @@ from src.api.routes.documents import router as documents_router
 from src.api.routes.search import router as search_router
 from src.api.routes.rag import router as rag_router
 from src.api.routes.ingest import router as ingest_router
+from src.api.routes.inspection import (
+    router as inspection_router
+)
 from src.api.routes.chat import router as chat_router
 from src.api.routes.stream_chat import (
     router as stream_chat_router
@@ -138,6 +141,10 @@ app.include_router(documents_router, dependencies=_auth)
 app.include_router(search_router, dependencies=_auth)
 app.include_router(rag_router, dependencies=_auth)
 app.include_router(ingest_router, dependencies=_auth)
+# MRPL Phase 2: inspection document intelligence (upload -> extract -> RAG).
+# Authenticated like the other ingest/RAG endpoints — it accepts confidential
+# file uploads and can drive embeddings/ingestion.
+app.include_router(inspection_router, dependencies=_auth)
 app.include_router(chat_router, prefix="/chat", tags=["Chat"], dependencies=_auth)
 app.include_router(stream_chat_router, dependencies=_auth)
 app.include_router(

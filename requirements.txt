@@ -24,6 +24,11 @@ pgvector==0.4.2
 python-dotenv==1.2.2  # M8: bump for PYSEC-2026-2270
 PyYAML==6.0.3
 
+# --- Document intelligence (MRPL Phase 2) ---
+# pypdf powers native text-PDF extraction (core). The OCR path (scanned PDFs /
+# images) uses OPTIONAL extras + system binaries — see requirements-ocr.txt.
+pypdf==6.11.0
+
 # --- LLM / RAG / embeddings ---
 openai==2.8.0
 qdrant-client==1.18.0
