@@ -11,6 +11,14 @@ except ImportError:
 
 from openai import OpenAI
 
+from src.llm.config import (
+    get_llm_provider_name,
+    get_llm_timeout,
+    get_openai_model,
+)
+from src.llm.base import LLMProviderError
+from src.llm.factory import select_providers
+
 
 logger = logging.getLogger("llm_router")
 
@@ -22,12 +30,11 @@ def _llm_timeout() -> float:
     request: the planner and verifier LLM calls happen OUTSIDE the controller's
     execution-phase ``asyncio.wait_for`` bound, so this is the only guard on
     them. Configurable via ``LLM_TIMEOUT_SECONDS`` (default 60).
+
+    Delegates to :func:`src.llm.config.get_llm_timeout` so the timeout is
+    resolved identically for the legacy chain and the provider abstraction.
     """
-    try:
-        value = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
-        return value if value > 0 else 60.0
-    except (TypeError, ValueError):
-        return 60.0
+    return get_llm_timeout()
 
 
 # ==========================================
@@ -72,15 +79,102 @@ if os.getenv("OPENAI_API_KEY"):
 
 
 # ==========================================
+# OFFLINE SAFE FALLBACK
+# ==========================================
+
+def _offline_fallback() -> str:
+    """Return the fail-CLOSED degraded payload used when no LLM tier is usable.
+
+    This function is the single generation entry used by BOTH the planner and
+    the verifier, so an offline fallback must never masquerade as a real,
+    approved verdict. The planner detects this (it sniffs for the "confidence"
+    key and repairs to a safe static plan); the verifier treats it as
+    not-approved. ``degraded=True`` lets any downstream consumer branch on the
+    degraded state.
+    """
+    return json.dumps({
+
+        "degraded": True,
+
+        "confidence": 0.0,
+
+        "approved": False,
+
+        "issues": [
+
+            "System operating in offline fallback mode — output is not verified"
+        ]
+    })
+
+
+# ==========================================
 # MAIN GENERATION FUNCTION
 # ==========================================
 
 def generate_response(
-
     prompt: str,
-
-    model: str = "gpt-4o-mini"
+    model: str = None,
 ):
+    """Generate a completion for ``prompt`` using the configured provider.
+
+    Selection is driven by ``LLM_PROVIDER`` (see :mod:`src.llm.config`):
+
+      * ``mock`` / ``ollama`` / ``openai`` -> the clean provider abstraction
+        in :mod:`src.llm`, with a fail-closed offline fallback;
+      * ``auto`` (the default when unset) -> the legacy OpenAI -> Ollama ->
+        offline chain kept below, byte-for-byte, so pre-Phase-1 production
+        behaviour is preserved.
+
+    The return contract (a string; a degraded JSON sentinel when offline) and
+    the LLM telemetry (:func:`get_last_llm_meta`) are unchanged.
+    """
+
+    selection = get_llm_provider_name()
+
+    if selection == "auto":
+        return _generate_auto(prompt, model)
+
+    # ==========================================
+    # EXPLICIT PROVIDER SELECTION (mock / ollama / openai)
+    # ==========================================
+    # Delegate to the provider abstraction. Each provider raises
+    # LLMProviderError when it cannot serve the request; we then fail closed to
+    # the offline sentinel, exactly like the auto chain.
+
+    for provider in select_providers(selection):
+
+        try:
+
+            text = provider.generate(prompt, model=model)
+
+            logger.info(
+                "LLM tier=%s model=%s", provider.name, provider.last_model
+            )
+
+            _record_llm_meta(provider.last_model, provider.name)
+
+            return text
+
+        except LLMProviderError as e:
+
+            logger.warning(
+                "%s tier failed, falling back: %s", provider.name, str(e)
+            )
+
+    logger.warning("All LLM tiers unavailable — using offline safe fallback")
+
+    _record_llm_meta(None, "offline")
+
+    return _offline_fallback()
+
+
+def _generate_auto(prompt: str, model: str = None):
+    """Legacy tiered chain: OpenAI -> Ollama -> offline safe fallback.
+
+    Preserved verbatim (module globals ``openai_client`` / ``ollama`` and all)
+    so existing behaviour — and the tests that monkeypatch those globals —
+    continue to work unchanged when ``LLM_PROVIDER`` is not set.
+    """
 
     # ==========================================
     # TIER 1 — OPENAI
@@ -90,9 +184,11 @@ def generate_response(
 
         try:
 
+            openai_model = model or get_openai_model()
+
             response = openai_client.chat.completions.create(
 
-                model=model,
+                model=openai_model,
 
                 temperature=0,
 
@@ -107,9 +203,9 @@ def generate_response(
                 ]
             )
 
-            logger.info("LLM tier=openai model=%s", model)
+            logger.info("LLM tier=openai model=%s", openai_model)
 
-            _record_llm_meta(model, "openai")
+            _record_llm_meta(openai_model, "openai")
 
             return response.choices[0].message.content
 
@@ -155,22 +251,4 @@ def generate_response(
 
     _record_llm_meta(None, "offline")
 
-    # Fail CLOSED and mark the payload itself as degraded. This function is the
-    # single entry used by BOTH the planner and the verifier, so an offline
-    # fallback must never masquerade as a real, approved verdict. The planner
-    # still detects this (it sniffs for the "confidence" key and repairs to a
-    # safe static plan); the verifier now correctly treats it as not-approved.
-    # `degraded=True` lets any downstream consumer branch on the degraded state.
-    return json.dumps({
-
-        "degraded": True,
-
-        "confidence": 0.0,
-
-        "approved": False,
-
-        "issues": [
-
-            "System operating in offline fallback mode — output is not verified"
-        ]
-    })
+    return _offline_fallback()

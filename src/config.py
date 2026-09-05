@@ -38,9 +38,13 @@ FALLBACK_KEYS = ("OPENAI_API_KEY",)
 
 # Purely optional tuning knobs (documented for completeness).
 OPTIONAL_KEYS = (
+    "LLM_PROVIDER",
     "OPENAI_MODEL",
+    "OPENAI_TEMPERATURE",
     "OLLAMA_MODEL",
     "OLLAMA_BASE_URL",
+    "OLLAMA_TEMPERATURE",
+    "LLM_TIMEOUT_SECONDS",
     "ENV",
     "CORS_ALLOW_ORIGINS",
     "JWT_ALGORITHM",
