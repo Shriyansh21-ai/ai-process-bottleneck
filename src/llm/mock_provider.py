@@ -86,6 +86,29 @@ def _parse_document_id(text: str):
     return None
 
 
+def _plain_instruction(user_query: str) -> str:
+    """Strip the internal routing lines from an inspection query.
+
+    The service prefixes the query with ``MRPL_INSPECTION_ANALYSIS`` and a
+    ``document_id=<id>`` line so the planner selects the inspection plan and
+    scopes retrieval. Those tokens must NOT leak into the semantic retrieval
+    query (e.g. ``MRPL`` would spuriously match document metadata), so we keep
+    only the human instruction lines for the ``query`` fed to rag_retrieval.
+    """
+    lines = []
+    for line in (user_query or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == _INSPECTION_MARKER:
+            continue
+        if re.match(r"document_id\s*=", stripped):
+            continue
+        lines.append(stripped)
+    plain = " ".join(lines).strip()
+    return plain or "identify safety-critical inspection findings"
+
+
 def build_mock_inspection_plan(user_query: str) -> str:
     """STRICT-JSON plan for the inspection workflow: retrieval -> findings.
 
@@ -96,8 +119,9 @@ def build_mock_inspection_plan(user_query: str) -> str:
     substring ``"confidence"`` (planner offline sentinel).
     """
     document_id = _parse_document_id(user_query)
+    instruction = _plain_instruction(user_query)
 
-    retrieval_input = {"query": user_query, "top_k": 8}
+    retrieval_input = {"query": instruction, "top_k": 8}
     if document_id is not None:
         retrieval_input["document_id"] = document_id
 
@@ -115,7 +139,7 @@ def build_mock_inspection_plan(user_query: str) -> str:
                 "step_id": 2,
                 "tool": "inspection_findings",
                 "purpose": "Synthesize structured findings from retrieved evidence (mock)",
-                "input": {"query": user_query},
+                "input": {"query": instruction},
                 "depends_on": [1],
             },
         ],
@@ -189,52 +213,99 @@ def _parse_evidence(prompt: str) -> list:
     return data if isinstance(data, list) else []
 
 
+# Max findings the mock emits (one per retrieved evidence chunk, capped).
+_MAX_MOCK_FINDINGS = 5
+
+# Deterministic keyword -> (severity, title, recommendation) classification. The
+# mock is not a real model; this lets a mock run produce varied, content-grounded
+# findings so the demo is representative. Order matters: first match wins.
+_CLASSIFIERS = [
+    (
+        ("rupture", "imminent failure", "catastrophic"),
+        "CRITICAL",
+        "Critical integrity risk identified",
+        "Isolate and remediate immediately before returning to service.",
+    ),
+    (
+        ("weld", "joint", "seam", "wall thickness", "pressure containment"),
+        "HIGH",
+        "Pipe/joint integrity concern",
+        "Perform a fitness-for-service assessment of the affected joint.",
+    ),
+    (
+        ("corrosion", "section loss", "material loss"),
+        "HIGH",
+        "Corrosion / material loss requiring assessment",
+        "Schedule a detailed inspection and maintenance assessment.",
+    ),
+    (
+        ("hazard", "handrail", "walkway", "grating", "fire", "emergency", "obstruct"),
+        "HIGH",
+        "Safety hazard requiring prompt action",
+        "Rectify the safety hazard as a priority before the next shift.",
+    ),
+    (
+        ("wear", "coating", "gasket", "aged", "minor", "monitor"),
+        "MEDIUM",
+        "Equipment wear observed",
+        "Monitor and re-inspect at the next scheduled maintenance window.",
+    ),
+]
+
+_DEFAULT_CLASS = (
+    "LOW",
+    "General inspection observation",
+    "Record for routine follow-up.",
+)
+
+_CONFIDENCE_BY_SEVERITY = {
+    "CRITICAL": 0.95,
+    "HIGH": 0.9,
+    "MEDIUM": 0.82,
+    "LOW": 0.7,
+}
+
+
+def _classify(content: str):
+    """Deterministically map evidence text to (severity, title, recommendation)."""
+    lower = (content or "").lower()
+    for keywords, severity, title, recommendation in _CLASSIFIERS:
+        if any(kw in lower for kw in keywords):
+            return severity, title, recommendation
+    return _DEFAULT_CLASS
+
+
 def build_mock_findings(prompt: str) -> str:
     """Return deterministic, evidence-grounded findings JSON.
 
-    The findings reference ONLY page numbers present in the supplied evidence, so
-    they pass the deterministic evidence/provenance guard in the inspection
-    verifier. This does NOT bypass the pipeline — the tool still calls this via
-    the provider abstraction, and the real verifier still validates the result.
+    One finding is produced per retrieved evidence chunk (capped), with a
+    severity/title/recommendation classified deterministically from the chunk
+    text. Every finding references ONLY a page number present in the supplied
+    evidence, so it passes the deterministic evidence/provenance guard in the
+    inspection verifier. This does NOT bypass the pipeline — the tool still calls
+    this via the provider abstraction, and the real verifier still validates it.
     """
     evidence = _parse_evidence(prompt)
     if not evidence:
         return json.dumps({"findings": []})
 
     findings = []
-
-    first = evidence[0]
-    findings.append(
-        {
-            "title": "Safety-critical condition identified in inspection evidence",
-            "description": (
-                "The inspection text describes a condition that warrants "
-                "attention based on the extracted report content."
-            ),
-            "severity": "HIGH",
-            "evidence": (first.get("content") or "")[:240],
-            "page_number": first.get("page_number"),
-            "recommendation": (
-                "Schedule a detailed inspection and maintenance assessment."
-            ),
-            "confidence": 0.9,
-        }
-    )
-
-    if len(evidence) > 1:
-        second = evidence[1]
+    for item in evidence[:_MAX_MOCK_FINDINGS]:
+        content = item.get("content") or ""
+        severity, title, recommendation = _classify(content)
         findings.append(
             {
-                "title": "Secondary observation requiring review",
+                "title": title,
                 "description": (
-                    "A further observation was noted in the report that should "
-                    "be reviewed by an inspector."
+                    "Identified from the inspection report evidence: the passage "
+                    "describes a condition consistent with a "
+                    f"{severity.lower()}-severity finding."
                 ),
-                "severity": "MEDIUM",
-                "evidence": (second.get("content") or "")[:240],
-                "page_number": second.get("page_number"),
-                "recommendation": "Review during the next scheduled inspection.",
-                "confidence": 0.8,
+                "severity": severity,
+                "evidence": content[:240],
+                "page_number": item.get("page_number"),
+                "recommendation": recommendation,
+                "confidence": _CONFIDENCE_BY_SEVERITY[severity],
             }
         )
 

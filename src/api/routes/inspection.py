@@ -94,8 +94,8 @@ async def extract_inspection_document(
 async def analyze_inspection_document(
     file: UploadFile = File(...),
     query: str = Form(
-        "Analyze this inspection report and identify safety-critical findings "
-        "requiring attention."
+        "Identify safety-critical findings and defects that require "
+        "maintenance attention."
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

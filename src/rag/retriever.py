@@ -1,3 +1,5 @@
+import os
+
 from sqlalchemy.orm import Session
 
 from src.rag.embeddings import (
@@ -7,6 +9,22 @@ from src.rag.embeddings import (
 from src.db.qdrant import client
 
 
+def _similarity_threshold() -> float:
+    """Minimum cosine score for a retrieved chunk (``RAG_SIMILARITY_THRESHOLD``).
+
+    Default 0.45 preserves the previous behaviour exactly. It is made
+    configurable so short/local demo corpora (where absolute similarity scores
+    run lower) can admit relevant page-level evidence without a code change.
+    """
+    try:
+        value = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.45"))
+        return value if 0.0 <= value <= 1.0 else 0.45
+    except (TypeError, ValueError):
+        return 0.45
+
+
+# Backwards-compatible module constant (default). Runtime filtering uses
+# _similarity_threshold() so the env var is honoured without a restart-time bake-in.
 SIMILARITY_THRESHOLD = 0.45
 
 
@@ -84,13 +102,15 @@ def retrieve_context(
 
     seen_contents = set()
 
+    threshold = _similarity_threshold()
+
     for result in results.points:
 
         # ==========================================
         # FILTER LOW QUALITY MATCHES
         # ==========================================
 
-        if result.score < SIMILARITY_THRESHOLD:
+        if result.score < threshold:
             continue
 
         payload = result.payload or {}

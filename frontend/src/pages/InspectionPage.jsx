@@ -1,103 +1,107 @@
 /**
- * MRPL Inspection Intelligence (Phase 3 demo vertical slice).
+ * MRPL Inspection Intelligence (Phase 4 demo experience).
  *
- * Upload an inspection report, run it through the real agent pipeline
- * (extract/OCR -> RAG -> Planner -> Executor -> Verifier) and render the
- * structured, evidence-backed findings with page provenance. Deliberately
- * minimal — one page, additive, reusing the existing dashboard chrome + api
- * client. No new design system.
+ * Upload an inspection report and run it through the REAL agent pipeline
+ * (extract/OCR -> RAG -> Planner -> Executor -> Verifier), then present the
+ * structured, evidence-backed findings with page provenance, a verification
+ * verdict and the real agent trace. Additive: reuses DashboardLayout, the API
+ * client, auth, routing and the existing design-system tokens.
+ *
+ * The findings ALWAYS come from the backend (POST /inspection/analyze) — nothing
+ * on this page is fabricated.
  */
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
-  FileSearch,
   Upload,
   AlertCircle,
   ShieldCheck,
   ShieldAlert,
   FileText,
+  FileSearch,
+  Cpu,
 } from "lucide-react";
 import PageHeader from "../components/ui/PageHeader.jsx";
 import { Card } from "../components/ui/Card.jsx";
 import { Spinner } from "../components/ui/Spinner.jsx";
-import { Link } from "../lib/router.jsx";
+import { EmptyState } from "../components/ui/StateViews.jsx";
+import FindingCard from "../components/inspection/FindingCard.jsx";
+import PipelineStages from "../components/inspection/PipelineStages.jsx";
+import AgentTrace from "../components/inspection/AgentTrace.jsx";
 import * as inspectionService from "../services/inspectionService.js";
 
 const DEFAULT_QUERY =
-  "Analyze this inspection report and identify safety-critical findings requiring attention.";
+  "Identify safety-critical findings and defects that require maintenance attention.";
 
-// Severity -> colored dot + label. Maps to the backend Severity enum.
-const SEVERITY_STYLE = {
-  CRITICAL: { color: "#b91c1c", dot: "🔴", label: "CRITICAL" },
-  HIGH: { color: "#dc2626", dot: "🔴", label: "HIGH" },
-  MEDIUM: { color: "#d97706", dot: "🟡", label: "MEDIUM" },
-  LOW: { color: "#2563eb", dot: "🔵", label: "LOW" },
-};
+const PAGE_DESCRIPTION =
+  "Analyze industrial inspection reports using sovereign AI: document intelligence, retrieval, agentic reasoning and verification.";
 
-function SeverityTag({ severity }) {
-  const s = SEVERITY_STYLE[severity] || { color: "#6b7280", dot: "⚪", label: severity };
-  return (
-    <span style={{ fontWeight: 700, color: s.color, fontSize: "0.8rem", letterSpacing: "0.02em" }}>
-      {s.dot} {s.label}
-    </span>
-  );
+// Keep in sync with the backend upload limits (UPLOAD_MAX_REQUEST_BYTES /
+// document config). Client-side check gives instant feedback before upload.
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const ALLOWED_EXT = ["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"];
+
+const STAGE_DEFS = [
+  { key: "extract", label: "Document Extraction" },
+  { key: "ocr", label: "OCR / Text" },
+  { key: "retrieval", label: "Knowledge Retrieval" },
+  { key: "analysis", label: "Agent Analysis" },
+  { key: "verify", label: "Verification" },
+];
+
+function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function FindingCard({ finding }) {
-  return (
-    <div
-      style={{
-        border: "1px solid var(--border, #e5e7eb)",
-        borderRadius: 10,
-        padding: "0.9rem 1rem",
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.5rem",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
-        <SeverityTag severity={finding.severity} />
-        <span className="faint mono" style={{ fontSize: "0.72rem" }}>
-          {finding.page_number != null ? `Page ${finding.page_number}` : "Page —"}
-          {finding.extraction_method ? ` · ${finding.extraction_method}` : ""}
-        </span>
-      </div>
+/** Map an API/client error to a clear, non-technical message. */
+function friendlyError(err) {
+  if (!err) return "The analysis could not be completed. Please try again.";
+  const status = err.status;
+  const code = err.detail?.detail?.code || err.detail?.code;
 
-      <div style={{ fontWeight: 600 }}>{finding.title}</div>
-      {finding.description && (
-        <p className="muted" style={{ margin: 0, fontSize: "0.86rem" }}>{finding.description}</p>
-      )}
+  if (status === 0) return "Cannot reach the backend. Make sure the API server is running and try again.";
+  if (status === 401) return "Your session has expired. Please sign in again.";
+  if (status === 413) return "That file is too large. Please upload a report under 20 MB.";
+  if (status === 415 || code === "unsupported_file_type")
+    return "Unsupported file type. Upload a PDF or an image (PNG, JPG, or TIFF).";
+  if (status === 503 || code === "ocr_unavailable")
+    return "This scanned document needs OCR, which is not available on the server right now.";
+  if (status === 429) return "Too many requests. Please wait a moment and try again.";
+  if (status === 422) {
+    if (code === "empty_document") return "No readable text could be extracted from this document.";
+    if (code === "corrupted_document" || code === "invalid_image")
+      return "The file appears to be corrupted or unreadable.";
+    if (code === "invalid_query" || code === "query_too_long")
+      return "Please provide a valid analysis instruction.";
+    return "The document could not be processed. Please check the file and try again.";
+  }
+  return err.message || "The analysis could not be completed. Please try again.";
+}
 
-      {finding.evidence && (
-        <div>
-          <div className="field-label">Evidence</div>
-          <blockquote
-            style={{
-              margin: 0,
-              padding: "0.5rem 0.75rem",
-              borderLeft: "3px solid var(--border, #e5e7eb)",
-              fontStyle: "italic",
-              fontSize: "0.84rem",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {finding.evidence}
-          </blockquote>
-        </div>
-      )}
+function computeStages(phase, result) {
+  if (phase === "running") return STAGE_DEFS.map((s) => ({ ...s, state: "active" }));
+  if (phase !== "done" || !result) return STAGE_DEFS.map((s) => ({ ...s, state: "idle" }));
 
-      {finding.recommendation && (
-        <div>
-          <div className="field-label">Recommendation</div>
-          <div style={{ fontSize: "0.86rem" }}>{finding.recommendation}</div>
-        </div>
-      )}
+  const doc = result.document || {};
+  const failed = result.overall_status === "analysis_failed";
+  const hasDoc = doc.document_id != null;
+  const approved = result.verification?.approved;
+  const extractedOk = !!doc.extraction_method;
 
-      <div className="faint" style={{ fontSize: "0.72rem" }}>
-        confidence: {(Number(finding.confidence) * 100).toFixed(0)}%
-      </div>
-    </div>
-  );
+  return [
+    { ...STAGE_DEFS[0], state: extractedOk ? "done" : "error" },
+    {
+      ...STAGE_DEFS[1],
+      state: extractedOk ? "done" : "error",
+      sublabel: extractedOk ? doc.extraction_method.toUpperCase() : undefined,
+    },
+    { ...STAGE_DEFS[2], state: hasDoc ? "done" : "error" },
+    { ...STAGE_DEFS[3], state: failed ? "error" : result.run_id != null ? "done" : "review" },
+    { ...STAGE_DEFS[4], state: failed ? "idle" : approved ? "done" : "review" },
+  ];
 }
 
 export default function InspectionPage() {
@@ -106,7 +110,28 @@ export default function InspectionPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-  const fileInputRef = useRef(null);
+
+  const phase = submitting ? "running" : error ? "error" : result ? "done" : "idle";
+
+  const onPickFile = (e) => {
+    const picked = e.target.files?.[0] || null;
+    setError(null);
+    setResult(null);
+    if (picked) {
+      const ext = picked.name.split(".").pop()?.toLowerCase();
+      if (!ALLOWED_EXT.includes(ext)) {
+        setFile(null);
+        setError({ status: 415, message: "Unsupported file type." });
+        return;
+      }
+      if (picked.size > MAX_UPLOAD_BYTES) {
+        setFile(null);
+        setError({ status: 413, message: "File too large." });
+        return;
+      }
+    }
+    setFile(picked);
+  };
 
   const analyze = async (e) => {
     e.preventDefault();
@@ -125,114 +150,208 @@ export default function InspectionPage() {
   };
 
   const doc = result?.document;
-  const approved = result?.verification?.approved;
+  const verification = result?.verification;
+  const approved = verification?.approved;
+  const showPipeline = phase === "running" || phase === "done";
 
   return (
     <>
-      <PageHeader
-        title="MRPL Inspection Intelligence"
-        description="Upload an inspection report and extract structured, evidence-backed findings using the agent pipeline."
-      />
+      <PageHeader title="MRPL Inspection Intelligence" description={PAGE_DESCRIPTION} />
 
-      <div className="grid-2">
-        <Card title="Inspection report">
-          <form onSubmit={analyze}>
-            <label className="field-label" htmlFor="inspection-file">Upload report (PDF or image)</label>
-            <input
-              id="inspection-file"
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              disabled={submitting}
-              style={{ display: "block", marginBottom: "0.75rem" }}
-            />
-            {file && (
-              <div className="faint" style={{ fontSize: "0.8rem", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                <FileText size={13} /> {file.name}
-              </div>
-            )}
+      {/* Upload / controls */}
+      <Card title="Inspection report">
+        <form onSubmit={analyze}>
+          <div className="grid-2" style={{ gap: "1.25rem" }}>
+            <div>
+              <label className="field-label" htmlFor="inspection-file">
+                Upload report (PDF or image)
+              </label>
+              <input
+                id="inspection-file"
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
+                onChange={onPickFile}
+                disabled={submitting}
+                style={{ display: "block", width: "100%" }}
+              />
+              {file && (
+                <div
+                  className="faint"
+                  style={{ fontSize: "0.8rem", marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem" }}
+                >
+                  <FileText size={13} aria-hidden="true" /> {file.name} · {formatFileSize(file.size)}
+                </div>
+              )}
+            </div>
 
-            <label className="field-label" htmlFor="inspection-query">Analysis instruction</label>
-            <textarea
-              id="inspection-query"
-              className="textarea"
-              rows={3}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              disabled={submitting}
-              style={{ resize: "vertical", marginBottom: "0.75rem" }}
-            />
+            <div>
+              <label className="field-label" htmlFor="inspection-query">
+                Analysis instruction
+              </label>
+              <textarea
+                id="inspection-query"
+                className="textarea"
+                rows={3}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                disabled={submitting}
+                style={{ resize: "vertical" }}
+              />
+            </div>
+          </div>
 
+          <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
             <button type="submit" className="btn btn-primary" disabled={submitting || !file}>
               {submitting ? <Spinner size={16} /> : <Upload size={16} />}
-              {submitting ? "Analyzing…" : "Analyze inspection"}
+              {submitting ? "Analyzing report…" : "Analyze Inspection Report"}
             </button>
-          </form>
-        </Card>
+            {!file && !error && (
+              <span className="faint" style={{ fontSize: "0.8rem" }}>
+                Select a PDF or image to begin.
+              </span>
+            )}
+          </div>
+        </form>
+      </Card>
 
-        <Card title="Analysis">
-          {submitting ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem", padding: "2rem 1rem", textAlign: "center" }}>
-              <Spinner size={26} />
-              <div style={{ fontWeight: 600 }}>Running the inspection pipeline…</div>
-              <p className="muted" style={{ margin: 0, fontSize: "0.85rem", maxWidth: 320 }}>
-                Extraction → RAG retrieval → Planner → Executor → Verifier. This can take a moment.
-              </p>
-            </div>
-          ) : error ? (
-            <div role="alert" className="badge-danger" style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.7rem 0.85rem", borderRadius: 9, fontSize: "0.88rem", fontWeight: 500 }}>
-              <AlertCircle size={16} aria-hidden="true" />
-              {error.message || "The analysis could not be completed."}
-            </div>
-          ) : result ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              {doc && (
-                <div className="faint" style={{ fontSize: "0.78rem", display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
-                  <span><FileSearch size={12} /> {doc.filename}</span>
-                  <span>Pages: {doc.page_count}</span>
-                  <span>Extraction: {doc.extraction_method}</span>
-                </div>
-              )}
+      {/* Error banner */}
+      {error && (
+        <div
+          role="alert"
+          className="badge-danger"
+          style={{
+            marginTop: "1.25rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            padding: "0.8rem 1rem",
+            borderRadius: 10,
+            fontSize: "0.9rem",
+            fontWeight: 500,
+          }}
+        >
+          <AlertCircle size={16} aria-hidden="true" />
+          {friendlyError(error)}
+        </div>
+      )}
 
-              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                {approved ? <ShieldCheck size={16} color="#16a34a" /> : <ShieldAlert size={16} color="#dc2626" />}
-                <span style={{ fontWeight: 600 }}>Status: {result.overall_status}</span>
+      {/* Pipeline */}
+      {showPipeline && (
+        <div style={{ marginTop: "1.25rem" }}>
+          <Card title="Processing pipeline">
+            <PipelineStages stages={computeStages(phase, result)} />
+            {submitting && (
+              <div
+                aria-live="polite"
+                className="muted"
+                style={{ marginTop: "0.9rem", textAlign: "center", fontSize: "0.85rem" }}
+              >
+                Analyzing inspection report — extraction, retrieval, agent analysis and verification…
               </div>
+            )}
+          </Card>
+        </div>
+      )}
 
-              {result.verification?.issues?.length > 0 && (
-                <div className="faint" style={{ fontSize: "0.78rem" }}>
-                  <div className="field-label">Verification issues</div>
-                  <ul style={{ margin: 0, paddingLeft: "1.1rem" }}>
-                    {result.verification.issues.map((iss, i) => <li key={i}>{iss}</li>)}
-                  </ul>
-                </div>
+      {/* Results */}
+      {phase === "done" && result && (
+        <div style={{ marginTop: "1.25rem", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {/* Summary + verification */}
+          <Card
+            title="Inspection analysis"
+            actions={<AgentTrace runId={result.run_id} approved={approved} />}
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "1rem", marginBottom: "1rem" }}>
+              <Meta icon={FileSearch} label="Document">{doc?.filename || "—"}</Meta>
+              <Meta label="Pages">{doc?.page_count ?? "—"}</Meta>
+              <Meta label="Extraction">{doc?.extraction_method ? doc.extraction_method.toUpperCase() : "—"}</Meta>
+              <Meta icon={Cpu} label="Findings">{result.findings?.length ?? 0}</Meta>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.6rem",
+                padding: "0.7rem 0.9rem",
+                borderRadius: 10,
+                background: approved ? "var(--ok-bg)" : "var(--warn-bg)",
+                border: `1px solid color-mix(in srgb, ${approved ? "var(--ok)" : "var(--warn)"} 30%, transparent)`,
+              }}
+            >
+              {approved ? (
+                <ShieldCheck size={18} style={{ color: "var(--ok)" }} aria-hidden="true" />
+              ) : (
+                <ShieldAlert size={18} style={{ color: "var(--warn)" }} aria-hidden="true" />
               )}
+              <span style={{ fontWeight: 600 }}>
+                {approved ? "Analysis verified" : "Verification requires review"}
+              </span>
+              <span className="faint" style={{ fontSize: "0.82rem" }}>
+                {verification?.findings_valid ?? 0}/{verification?.findings_total ?? 0} findings validated
+                {verification?.findings_rejected ? ` · ${verification.findings_rejected} rejected` : ""}
+              </span>
+            </div>
 
-              <div>
-                <div className="field-label">Findings ({result.findings?.length || 0})</div>
-                {result.findings?.length ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                    {result.findings.map((f) => <FindingCard key={f.finding_id} finding={f} />)}
-                  </div>
-                ) : (
-                  <div className="muted" style={{ fontSize: "0.86rem" }}>No findings were produced.</div>
-                )}
+            {verification?.issues?.length > 0 && (
+              <div style={{ marginTop: "0.75rem" }}>
+                <div className="field-label">Verification notes</div>
+                <ul className="muted" style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.82rem" }}>
+                  {verification.issues.map((iss, i) => (
+                    <li key={i} style={{ overflowWrap: "anywhere" }}>{iss}</li>
+                  ))}
+                </ul>
               </div>
+            )}
+          </Card>
 
-              {result.run_id != null && (
-                <Link to={`/runs/${result.run_id}`} className="btn btn-sm" style={{ alignSelf: "flex-start" }}>
-                  View agent execution trace
-                </Link>
-              )}
-            </div>
-          ) : (
-            <div className="muted" style={{ padding: "2rem 1rem", textAlign: "center", fontSize: "0.9rem" }}>
-              Upload an inspection report and run the analysis to see findings here.
-            </div>
-          )}
-        </Card>
-      </div>
+          {/* Findings */}
+          <div>
+            <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.05rem", fontWeight: 700 }}>
+              Findings ({result.findings?.length || 0})
+            </h2>
+            {result.findings?.length ? (
+              <div className="grid-2">
+                {result.findings.map((f) => (
+                  <FindingCard key={f.finding_id} finding={f} />
+                ))}
+              </div>
+            ) : (
+              <Card>
+                <EmptyState
+                  icon={FileSearch}
+                  title="No findings"
+                  message="The analysis did not surface any findings that could be tied to document evidence."
+                />
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Initial empty state */}
+      {phase === "idle" && (
+        <div style={{ marginTop: "1.25rem" }}>
+          <Card>
+            <EmptyState
+              icon={FileSearch}
+              title="No analysis yet"
+              message="Upload an inspection report and click Analyze to extract evidence-backed findings."
+            />
+          </Card>
+        </div>
+      )}
     </>
+  );
+}
+
+function Meta({ icon: Icon, label, children }) {
+  return (
+    <div>
+      <div className="field-label" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+        {Icon && <Icon size={13} aria-hidden="true" />} {label}
+      </div>
+      <div style={{ fontSize: "0.92rem", fontWeight: 600, overflowWrap: "anywhere" }}>{children}</div>
+    </div>
   );
 }
