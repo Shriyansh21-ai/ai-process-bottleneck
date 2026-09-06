@@ -29,6 +29,13 @@ PyYAML==6.0.3
 # images) uses OPTIONAL extras + system binaries — see requirements-ocr.txt.
 pypdf==6.11.0
 
+# --- Reporting (MRPL Phase 5) ---
+# reportlab renders the downloadable inspection-analysis PDF (POST
+# /inspection/report). Already used by scripts/generate_demo_report.py; pinned
+# here because it is now a runtime dependency of the report endpoint. Pure
+# Python, no system binaries, fully offline.
+reportlab==4.4.4
+
 # --- LLM / RAG / embeddings ---
 openai==2.8.0
 qdrant-client==1.18.0

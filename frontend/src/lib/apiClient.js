@@ -219,6 +219,48 @@ export async function request(path, opts = {}) {
   return parsed;
 }
 
+/**
+ * POST a JSON body and receive a binary Blob (e.g. a generated PDF report).
+ *
+ * Kept separate from `request` because that helper parses every response as
+ * text/JSON. This path streams the raw bytes for a file download, while still
+ * attaching JWT auth, honoring 401 handling and surfacing a safe ApiError on
+ * failure (a 5xx body is never surfaced — it could carry internal detail).
+ *
+ * @param {string} path
+ * @param {any} body       JSON-serializable request body.
+ * @param {{signal?:AbortSignal}} [opts]
+ * @returns {Promise<Blob>}
+ */
+export async function postForBlob(path, body, opts = {}) {
+  const { signal } = opts;
+  const headers = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  let res;
+  try {
+    res = await fetch(API_BASE_URL + path, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") throw err;
+    throw new ApiError(0, defaultMessageForStatus(0), null);
+  }
+
+  if (!res.ok) {
+    if (res.status === 401) notifyUnauthorized();
+    // Do not read/surface an error body here — for a binary endpoint an error
+    // payload is not user-presentable and a 5xx could carry internal detail.
+    throw new ApiError(res.status, defaultMessageForStatus(res.status), null);
+  }
+
+  return res.blob();
+}
+
 export const api = {
   get: (path, opts) => request(path, { ...opts, method: "GET" }),
   post: (path, body, opts) => request(path, { ...opts, method: "POST", body }),
@@ -226,4 +268,5 @@ export const api = {
   del: (path, opts) => request(path, { ...opts, method: "DELETE" }),
   upload: (path, formData, opts) =>
     request(path, { ...opts, method: "POST", formData }),
+  postForBlob,
 };

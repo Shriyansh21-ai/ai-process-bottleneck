@@ -16,7 +16,7 @@ findings synthesis) — it is the reusable ingestion foundation.
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from src.core.auth import get_current_active_user
@@ -30,6 +30,10 @@ from src.documents.config import get_preview_chars
 from src.documents.errors import DocumentError
 from src.schemas.inspection import InspectionAnalysis
 from src.services.inspection_analysis_service import InspectionAnalysisService
+from src.services.inspection_report import (
+    render_report_pdf,
+    report_filename,
+)
 
 logger = logging.getLogger("api.inspection")
 
@@ -145,3 +149,35 @@ async def analyze_inspection_document(
         )
 
     return analysis
+
+
+@router.post("/report")
+async def download_inspection_report(analysis: InspectionAnalysis):
+    """Render an already-computed analysis as a downloadable PDF report.
+
+    This is a pure FORMATTER of the client's existing ``InspectionAnalysis``
+    (the exact object returned by ``/inspection/analyze``). It does NOT re-run
+    the pipeline, write to the database, call an LLM or touch the network — so
+    downloading a report creates no duplicate records and cannot submit the
+    document a second time. Only user-facing inspection fields are rendered;
+    the ``InspectionAnalysis`` contract carries no secrets, tokens or
+    connection strings.
+
+    Auth is enforced by the router-level dependency in ``main.py`` (the whole
+    inspection router requires a valid access token), matching ``/extract``.
+    """
+    try:
+        pdf_bytes = render_report_pdf(analysis)
+    except Exception:
+        logger.exception("Inspection report generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Report generation failed", "code": "report_failed"},
+        )
+
+    filename = report_filename(analysis)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

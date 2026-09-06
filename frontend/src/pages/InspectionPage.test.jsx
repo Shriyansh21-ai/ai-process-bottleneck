@@ -53,7 +53,13 @@ async function selectFileAndAnalyze(user, name = "report.pdf") {
 describe("InspectionPage", () => {
   beforeEach(() => {
     inspectionService.analyzeInspection.mockReset();
+    inspectionService.downloadReport.mockReset();
     runsService.getRunSteps.mockReset();
+    // jsdom does not implement object URLs; stub them for the download flow.
+    if (!URL.createObjectURL) URL.createObjectURL = () => "blob:mock";
+    if (!URL.revokeObjectURL) URL.revokeObjectURL = () => {};
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   });
 
   it("renders the page title, description and initial empty state", () => {
@@ -169,6 +175,101 @@ describe("InspectionPage", () => {
     render(<InspectionPage />);
     await selectFileAndAnalyze(user);
     expect(await screen.findByText(/cannot reach the backend/i)).toBeInTheDocument();
+  });
+
+  it("shows Download / New Analysis only after a successful analysis", async () => {
+    const user = userEvent.setup();
+    inspectionService.analyzeInspection.mockResolvedValue(ANALYSIS);
+    render(<InspectionPage />);
+
+    // Not present before analysis.
+    expect(screen.queryByRole("button", { name: /download inspection report/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /new analysis/i })).toBeNull();
+
+    await selectFileAndAnalyze(user);
+    await screen.findByText("Corrosion detected");
+
+    expect(screen.getByRole("button", { name: /download inspection report/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new analysis/i })).toBeInTheDocument();
+  });
+
+  it("downloads a report from the current analysis without re-running it", async () => {
+    const user = userEvent.setup();
+    inspectionService.analyzeInspection.mockResolvedValue(ANALYSIS);
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "application/pdf" });
+    inspectionService.downloadReport.mockResolvedValue(blob);
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    render(<InspectionPage />);
+    await selectFileAndAnalyze(user);
+    await screen.findByText("Corrosion detected");
+
+    await user.click(screen.getByRole("button", { name: /download inspection report/i }));
+
+    await waitFor(() =>
+      expect(inspectionService.downloadReport).toHaveBeenCalledWith(ANALYSIS)
+    );
+    // analysis was NOT re-submitted, and a browser download was triggered.
+    expect(inspectionService.analyzeInspection).toHaveBeenCalledTimes(1);
+    expect(clickSpy).toHaveBeenCalled();
+    clickSpy.mockRestore();
+  });
+
+  it("disables the download button and shows a generating state while downloading", async () => {
+    const user = userEvent.setup();
+    inspectionService.analyzeInspection.mockResolvedValue(ANALYSIS);
+    let resolve;
+    inspectionService.downloadReport.mockReturnValue(new Promise((r) => { resolve = r; }));
+
+    render(<InspectionPage />);
+    await selectFileAndAnalyze(user);
+    await screen.findByText("Corrosion detected");
+
+    await user.click(screen.getByRole("button", { name: /download inspection report/i }));
+    const btn = await screen.findByRole("button", { name: /generating report/i });
+    expect(btn).toBeDisabled();
+
+    resolve(new Blob(["x"], { type: "application/pdf" })); // cleanup
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /download inspection report/i })).toBeEnabled()
+    );
+  });
+
+  it("shows a friendly error when report generation fails", async () => {
+    const user = userEvent.setup();
+    inspectionService.analyzeInspection.mockResolvedValue(ANALYSIS);
+    inspectionService.downloadReport.mockRejectedValue(new ApiError(500, "boom", null));
+
+    render(<InspectionPage />);
+    await selectFileAndAnalyze(user);
+    await screen.findByText("Corrosion detected");
+
+    await user.click(screen.getByRole("button", { name: /download inspection report/i }));
+    expect(await screen.findByText(/could not generate the report/i)).toBeInTheDocument();
+    // findings are still on screen — the failure did not wipe the analysis.
+    expect(screen.getByText("Corrosion detected")).toBeInTheDocument();
+  });
+
+  it("New Analysis resets the UI back to the empty state", async () => {
+    const user = userEvent.setup();
+    inspectionService.analyzeInspection.mockResolvedValue(ANALYSIS);
+    render(<InspectionPage />);
+
+    await selectFileAndAnalyze(user);
+    await screen.findByText("Corrosion detected");
+
+    await user.click(screen.getByRole("button", { name: /new analysis/i }));
+
+    // back to the initial empty state; findings + result cleared.
+    expect(screen.getByText(/no analysis yet/i)).toBeInTheDocument();
+    expect(screen.queryByText("Corrosion detected")).toBeNull();
+    expect(screen.getByRole("button", { name: /analyze inspection report/i })).toBeDisabled();
+    // instruction reset to default.
+    expect(screen.getByLabelText(/analysis instruction/i)).toHaveValue(
+      "Identify safety-critical findings and defects that require maintenance attention."
+    );
+    // reset is client-only — no extra analyze call was made.
+    expect(inspectionService.analyzeInspection).toHaveBeenCalledTimes(1);
   });
 
   it("shows the real agent trace on demand", async () => {

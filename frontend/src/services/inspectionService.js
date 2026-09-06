@@ -22,3 +22,19 @@ export function analyzeInspection(file, query, opts) {
   if (query) fd.append("query", query);
   return api.upload("/inspection/analyze", fd, opts);
 }
+
+/**
+ * Generate a downloadable PDF report from an already-computed analysis.
+ *
+ * Sends the InspectionAnalysis the UI already holds to POST /inspection/report
+ * and returns the PDF as a Blob. This does NOT re-run the pipeline or re-upload
+ * the document — it only re-formats data the client already has, so it creates
+ * no duplicate records.
+ *
+ * @param {object} analysis InspectionAnalysis returned by analyzeInspection
+ * @param {{signal?:AbortSignal}} [opts]
+ * @returns {Promise<Blob>} application/pdf
+ */
+export function downloadReport(analysis, opts) {
+  return api.postForBlob("/inspection/report", analysis, opts);
+}

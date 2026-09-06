@@ -20,6 +20,8 @@ import {
   FileText,
   FileSearch,
   Cpu,
+  Download,
+  RotateCcw,
 } from "lucide-react";
 import PageHeader from "../components/ui/PageHeader.jsx";
 import { Card } from "../components/ui/Card.jsx";
@@ -54,6 +56,26 @@ function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** Safe, descriptive download filename derived from the analyzed document. */
+function reportFilename(result) {
+  const raw = result?.document?.filename || "inspection";
+  const base = raw.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return `${base || "inspection"}_inspection_report.pdf`;
+}
+
+/** Trigger a browser download of a Blob without navigating away. */
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke on the next tick so the download has a chance to start.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /** Map an API/client error to a clear, non-technical message. */
@@ -110,6 +132,10 @@ export default function InspectionPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(null);
+  // Bump to force-remount the (uncontrolled) file input on reset.
+  const [inputKey, setInputKey] = useState(0);
 
   const phase = submitting ? "running" : error ? "error" : result ? "done" : "idle";
 
@@ -139,6 +165,7 @@ export default function InspectionPage() {
     setSubmitting(true);
     setError(null);
     setResult(null);
+    setDownloadError(null);
     try {
       const res = await inspectionService.analyzeInspection(file, query.trim() || DEFAULT_QUERY);
       setResult(res);
@@ -147,6 +174,34 @@ export default function InspectionPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // Download a PDF report of the CURRENT analysis. This only re-formats the
+  // result already on screen — it never re-runs analysis or re-uploads the
+  // document (no duplicate records). The page does not reload.
+  const downloadReport = async () => {
+    if (!result || downloading) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const blob = await inspectionService.downloadReport(result);
+      triggerBlobDownload(blob, reportFilename(result));
+    } catch (err) {
+      setDownloadError(err);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  // Reset the UI for a fresh analysis. This is a client-only reset — it does
+  // NOT delete any backend/database records.
+  const newAnalysis = () => {
+    setFile(null);
+    setResult(null);
+    setError(null);
+    setDownloadError(null);
+    setQuery(DEFAULT_QUERY);
+    setInputKey((k) => k + 1);
   };
 
   const doc = result?.document;
@@ -167,6 +222,7 @@ export default function InspectionPage() {
                 Upload report (PDF or image)
               </label>
               <input
+                key={inputKey}
                 id="inspection-file"
                 type="file"
                 accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
@@ -259,8 +315,49 @@ export default function InspectionPage() {
           {/* Summary + verification */}
           <Card
             title="Inspection analysis"
-            actions={<AgentTrace runId={result.run_id} approved={approved} />}
+            actions={
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <AgentTrace runId={result.run_id} approved={approved} />
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={downloadReport}
+                  disabled={downloading}
+                >
+                  {downloading ? <Spinner size={14} /> : <Download size={15} aria-hidden="true" />}
+                  {downloading ? "Generating report…" : "Download Inspection Report"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={newAnalysis}
+                  disabled={downloading}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  New Analysis
+                </button>
+              </div>
+            }
           >
+            {downloadError && (
+              <div
+                role="alert"
+                className="badge-danger"
+                style={{
+                  marginBottom: "1rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.7rem 0.9rem",
+                  borderRadius: 10,
+                  fontSize: "0.85rem",
+                  fontWeight: 500,
+                }}
+              >
+                <AlertCircle size={15} aria-hidden="true" />
+                Could not generate the report. Please try again.
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "1rem", marginBottom: "1rem" }}>
               <Meta icon={FileSearch} label="Document">{doc?.filename || "—"}</Meta>
               <Meta label="Pages">{doc?.page_count ?? "—"}</Meta>
