@@ -21,6 +21,7 @@ import OverviewPage from "./pages/OverviewPage.jsx";
 import RunsPage from "./pages/RunsPage.jsx";
 import RunDetailPage from "./pages/RunDetailPage.jsx";
 import SubmitRunPage from "./pages/SubmitRunPage.jsx";
+import InspectionPage from "./pages/InspectionPage.jsx";
 import ObservabilityPage from "./pages/ObservabilityPage.jsx";
 import HealthPage from "./pages/HealthPage.jsx";
 import NotFoundPage from "./pages/NotFoundPage.jsx";
@@ -53,6 +54,7 @@ const routes = [
   { path: "/runs", element: dash(<RunsPage />) },
   { path: "/runs/:id", element: dash(<RunDetailPage />) },
   { path: "/run", element: dash(<SubmitRunPage />) },
+  { path: "/inspection", element: dash(<InspectionPage />) },
   { path: "/observability", element: dash(<ObservabilityPage />) },
   { path: "/health", element: dash(<HealthPage />) },
 ];

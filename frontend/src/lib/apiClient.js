@@ -145,6 +145,7 @@ export async function request(path, opts = {}) {
     method = "GET",
     body,
     form,
+    formData,
     params,
     auth = true,
     signal,
@@ -163,7 +164,11 @@ export async function request(path, opts = {}) {
   const headers = {};
   let payload;
 
-  if (form) {
+  if (formData) {
+    // multipart/form-data (file uploads). Do NOT set Content-Type — the browser
+    // adds it with the correct multipart boundary.
+    payload = formData;
+  } else if (form) {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
     payload =
       form instanceof URLSearchParams
@@ -219,4 +224,6 @@ export const api = {
   post: (path, body, opts) => request(path, { ...opts, method: "POST", body }),
   put: (path, body, opts) => request(path, { ...opts, method: "PUT", body }),
   del: (path, opts) => request(path, { ...opts, method: "DELETE" }),
+  upload: (path, formData, opts) =>
+    request(path, { ...opts, method: "POST", formData }),
 };

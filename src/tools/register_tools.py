@@ -22,6 +22,10 @@ from src.tools.memory_tool import (
     load_memory
 )
 
+from src.tools.inspection_tool import (
+    synthesize_inspection_findings
+)
+
 
 ToolRegistry.register(
 
@@ -93,4 +97,22 @@ ToolRegistry.register(
         "Retrieve relevant long-term memories for the session. "
         "Optional inputs: 'query', 'session_id', 'limit' (all defaulted)."
     ),
+)
+
+ToolRegistry.register(
+
+    name="inspection_findings",
+
+    function=synthesize_inspection_findings,
+
+    description=(
+        "Synthesize structured, evidence-backed inspection findings from the "
+        "page-tagged chunks retrieved by a prior rag_retrieval step. "
+        "Required input: 'query' — the analysis instruction. Reads retrieved "
+        "evidence from prior-step context; returns findings with page provenance."
+    ),
+
+    # 'query' is REQUIRED so the planner always supplies an instruction; the
+    # evidence itself is harvested from injected context, not the planner.
+    required_inputs=["query"],
 )

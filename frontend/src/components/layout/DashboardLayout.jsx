@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   ShieldCheck,
+  FileSearch,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "../../lib/router.jsx";
 import { useAuth } from "../../auth/AuthContext.jsx";
@@ -29,6 +30,7 @@ const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard, exact: true },
   { to: "/runs", label: "Agent Runs", icon: ListTree },
   { to: "/run", label: "Submit Task", icon: PlayCircle },
+  { to: "/inspection", label: "Inspection", icon: FileSearch },
   { to: "/observability", label: "Observability", icon: Activity, admin: true },
   { to: "/health", label: "System Health", icon: HeartPulse },
 ];

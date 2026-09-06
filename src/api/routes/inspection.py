@@ -19,6 +19,8 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from src.core.auth import get_current_active_user
+from src.db.models.user import User
 from src.db.session import get_db
 from src.documents import (
     DocumentIntelligencePipeline,
@@ -26,10 +28,16 @@ from src.documents import (
 )
 from src.documents.config import get_preview_chars
 from src.documents.errors import DocumentError
+from src.schemas.inspection import InspectionAnalysis
+from src.services.inspection_analysis_service import InspectionAnalysisService
 
 logger = logging.getLogger("api.inspection")
 
 router = APIRouter(prefix="/inspection", tags=["Inspection"])
+
+# Bound the analysis instruction so a single request cannot drive unbounded
+# LLM token cost (mirrors the /run QueryRequest bound).
+_MAX_QUERY_CHARS = 2000
 
 
 @router.post("/extract")
@@ -80,3 +88,60 @@ async def extract_inspection_document(
         response["ingestion"] = {"status": "skipped"}
 
     return response
+
+
+@router.post("/analyze", response_model=InspectionAnalysis)
+async def analyze_inspection_document(
+    file: UploadFile = File(...),
+    query: str = Form(
+        "Analyze this inspection report and identify safety-critical findings "
+        "requiring attention."
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Full MRPL vertical slice: document -> structured, evidence-backed findings.
+
+    Pipeline (all EXISTING components):
+
+        upload -> extract/OCR (page provenance) -> RAG ingest ->
+        PlannerAgent -> ToolExecutor (rag_retrieval + inspection_findings) ->
+        VerifierAgent -> deterministic findings verification -> InspectionAnalysis
+
+    Works identically under ``LLM_PROVIDER=mock`` and ``LLM_PROVIDER=ollama``.
+    """
+    query = (query or "").strip()
+    if not query:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "query must not be empty", "code": "invalid_query"},
+        )
+    if len(query) > _MAX_QUERY_CHARS:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "query is too long", "code": "query_too_long"},
+        )
+
+    data = await file.read()
+
+    service = InspectionAnalysisService(
+        db=db,
+        session_id=f"inspection-{current_user.id}",
+        user_id=current_user.id,
+    )
+
+    try:
+        analysis = await service.analyze(data, filename=file.filename, query=query)
+    except DocumentError as err:
+        # Structured, content-free extraction/validation error -> HTTP status.
+        raise HTTPException(status_code=err.http_status, detail=err.to_dict())
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected inspection-analysis failure")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Analysis failed", "code": "analysis_failed"},
+        )
+
+    return analysis
