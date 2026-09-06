@@ -10,6 +10,10 @@ Qdrant. It needs **no OpenAI, no Ollama, no internet and no GPU**.
 > Ollama (`LLM_PROVIDER=ollama`) is validated on a separate GPU-capable machine.
 > Do **not** run Ollama for this demo.
 
+This document covers **Mode A** (the offline mock demo). For **Mode B** —
+validating real local Ollama inference and real Tesseract/Poppler OCR on a
+capable machine — see [`docs/TEAMMATE_VALIDATION.md`](TEAMMATE_VALIDATION.md).
+
 ---
 
 ## 1. Prerequisites
